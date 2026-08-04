@@ -1,0 +1,21 @@
+project = "my-springboot-app"
+region  = "eu-north-1"
+
+container_port    = 8080
+health_check_path = "/actuator/health"
+image_tag         = "v1.0.0"
+spring_profile    = "prod"
+
+task_cpu      = 512
+task_memory   = 1024
+desired_count = 2
+
+db_name              = "appdb"
+db_username          = "appuser"
+db_instance_class    = "db.t4g.micro"
+db_allocated_storage = 20
+db_multi_az          = false
+
+# Oyrenme/test ucun false saxla (NAT Gateway ~$35/ay).
+# Prod-da mutleq true.
+enable_nat_gateway = false
