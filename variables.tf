@@ -1,7 +1,7 @@
 variable "project" {
   description = "Resurs adlarinda prefiks kimi istifade olunur"
   type        = string
-  default     = "springboot-demo"
+  default     = "test-backend"
 }
 
 variable "region" {
