@@ -1,4 +1,4 @@
-project = "my-springboot-app"
+project = "test-backend"
 region  = "eu-north-1"
 
 container_port    = 8080
