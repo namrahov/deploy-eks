@@ -14,7 +14,7 @@ output "ecr_repository_url" {
 
 output "docker_push_commands" {
   description = "Image-i ECR-e gonderme adimlari"
-  value = <<-EOT
+  value       = <<-EOT
     aws ecr get-login-password --region ${var.region} | docker login --username AWS --password-stdin ${split("/", aws_ecr_repository.app.repository_url)[0]}
     docker build -t ${var.project} .
     docker tag ${var.project}:latest ${aws_ecr_repository.app.repository_url}:${var.image_tag}

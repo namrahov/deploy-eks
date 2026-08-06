@@ -72,7 +72,7 @@ resource "aws_db_instance" "main" {
   backup_window           = "03:00-04:00"
   maintenance_window      = "sun:04:00-sun:05:00"
 
-  performance_insights_enabled = true
+  performance_insights_enabled    = true
   enabled_cloudwatch_logs_exports = ["postgresql"]
 
   # Oyrenme ucun: destroy-u asanlasdirir. Prod-da tersi olmalidir!
