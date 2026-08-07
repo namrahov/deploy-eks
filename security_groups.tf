@@ -38,7 +38,9 @@ resource "aws_security_group" "ecs" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description     = "ALB -> container"
+    # AWS SG qayda aciqlamasinda "<" ve ">" QADAGANDIR
+    # (icaze verilen: ^[0-9A-Za-z_ .:/()#,@\[\]+=&;{}!$*-]*$)
+    description     = "ALB to container"
     from_port       = var.container_port
     to_port         = var.container_port
     protocol        = "tcp"
@@ -62,7 +64,7 @@ resource "aws_security_group" "rds" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description     = "ECS -> Postgres"
+    description     = "ECS to Postgres"
     from_port       = 5432
     to_port         = 5432
     protocol        = "tcp"
