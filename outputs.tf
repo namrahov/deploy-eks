@@ -12,12 +12,16 @@ output "ecr_repository_url" {
   value       = aws_ecr_repository.app.repository_url
 }
 
+locals {
+  # runtime_platform.cpu_architecture ile docker --platform eyni olmalidir
+  docker_platform = var.cpu_architecture == "ARM64" ? "linux/arm64" : "linux/amd64"
+}
+
 output "docker_push_commands" {
   description = "Image-i ECR-e gonderme adimlari"
   value       = <<-EOT
     aws ecr get-login-password --region ${var.region} | docker login --username AWS --password-stdin ${split("/", aws_ecr_repository.app.repository_url)[0]}
-    docker build -t ${var.project} .
-    docker tag ${var.project}:latest ${aws_ecr_repository.app.repository_url}:${var.image_tag}
+    docker build --platform ${local.docker_platform} -t ${aws_ecr_repository.app.repository_url}:${var.image_tag} .
     docker push ${aws_ecr_repository.app.repository_url}:${var.image_tag}
   EOT
 }
@@ -33,6 +37,15 @@ output "db_secret_name" {
 
 output "logs_command" {
   value = "aws logs tail ${aws_cloudwatch_log_group.app.name} --follow --region ${var.region}"
+}
+
+output "redeploy_command" {
+  description = <<-EOT
+    Service-de lifecycle.ignore_changes = [task_definition] var, yeni image push edende
+    Terraform yeni task definition revision yaradir amma service-i YENILEMIR.
+    Rollout-u bu emrle basla (--task-definition revision-suz yazilanda en son ACTIVE secilir).
+  EOT
+  value       = "aws ecs update-service --cluster ${aws_ecs_cluster.main.name} --service ${aws_ecs_service.app.name} --task-definition ${aws_ecs_task_definition.app.family} --force-new-deployment --region ${var.region}"
 }
 
 output "ecs_exec_command" {

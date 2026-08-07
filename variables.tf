@@ -39,10 +39,48 @@ variable "spring_profile" {
   default = "prod"
 }
 
+variable "cors_allowed_origins" {
+  description = <<-EOT
+    test-backend-deki app.cors.allowed-origins (CorsConfig.java /api/** ucun).
+    Vergulle ayrilmis siyahi: "https://app.example.com,https://admin.example.com".
+    Bos qoysan tetbiq oz default-una (http://localhost:5173) qayidir ki,
+    prod-da frontend-i bloklayar. Frontend yoxdursa ferqi yoxdur.
+  EOT
+  type        = string
+  default     = "http://localhost:5173"
+}
+
 variable "task_cpu" {
   description = "Fargate CPU units (256/512/1024/2048/4096)"
   type        = number
   default     = 512
+}
+
+variable "cpu_architecture" {
+  description = <<-EOT
+    Task-in arxitekturasi: X86_64 ve ya ARM64.
+    Docker image EYNI arxitektura ucun qurulmalidir, yoxsa task
+    "exec format error" ile dusur (Apple Silicon-da en cox rast gelinen sehv).
+  EOT
+  type        = string
+  default     = "X86_64"
+
+  validation {
+    condition     = contains(["X86_64", "ARM64"], var.cpu_architecture)
+    error_message = "cpu_architecture yalniz X86_64 ve ya ARM64 ola biler."
+  }
+}
+
+variable "enable_container_healthcheck" {
+  description = <<-EOT
+    Container-in oz healthCheck-i (ALB-dekinden ayridir).
+    DIQQET: `curl` image-in icinde OLMALIDIR. Standart eclipse-temurin /
+    distroless image-lerde curl yoxdur -> health check hemise ugursuz olur,
+    ECS task-i oldurur ve sonsuz restart dovresi yaranir.
+    Dockerfile-da curl qurmusansa true et.
+  EOT
+  type        = bool
+  default     = false
 }
 
 variable "task_memory" {
@@ -80,8 +118,15 @@ variable "db_allocated_storage" {
 }
 
 variable "db_engine_version" {
-  type    = string
-  default = "16.4"
+  description = <<-EOT
+    Yalniz major versiya yaz ("16") -> RDS hemin major-in en son minor-unu secir.
+    Konkret minor ("16.14") yazsan, hemin minor regionda MOVCUD olmalidir,
+    yoxsa apply "Cannot find version ... for postgres" ile dusur.
+    Yoxlamaq: aws rds describe-db-engine-versions --engine postgres --region <region> \
+      --query "DBEngineVersions[].EngineVersion"
+  EOT
+  type        = string
+  default     = "16"
 }
 
 variable "db_multi_az" {

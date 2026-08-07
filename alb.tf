@@ -55,6 +55,51 @@ resource "aws_lb_listener" "http" {
   }
 }
 
+# ---------- Actuator-u internetden qoru ----------
+# MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE health,info,metrics,prometheus acir.
+# ALB butun path-leri oturdugu ucun /actuator/prometheus da internetden gorunerdi.
+# Ona gore: yalniz health endpoint-i buraxiriq, qalan actuator path-leri baglanir.
+#
+# QEYD: target group-un oz health check-i listener rule-lardan KECMIR
+# (birbasa target-a gedir), ona gore bu qaydalar health check-i pozmur.
+
+resource "aws_lb_listener_rule" "actuator_health" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app.arn
+  }
+
+  condition {
+    path_pattern {
+      values = [var.health_check_path]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "actuator_block" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 20
+
+  action {
+    type = "fixed-response"
+
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "Not Found"
+      status_code  = "404"
+    }
+  }
+
+  condition {
+    path_pattern {
+      values = ["/actuator", "/actuator/*"]
+    }
+  }
+}
+
 # ---------- HTTPS ucun (domain + ACM sertifikat oldugda) ----------
 # resource "aws_lb_listener" "https" {
 #   load_balancer_arn = aws_lb.main.arn

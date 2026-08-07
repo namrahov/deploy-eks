@@ -35,11 +35,11 @@ resource "aws_ecs_task_definition" "app" {
 
   runtime_platform {
     operating_system_family = "LINUX"
-    cpu_architecture        = "X86_64" # ARM image qurursansa: "ARM64" (daha ucuz)
+    cpu_architecture        = var.cpu_architecture # ARM64 daha ucuzdur, amma image de ARM olmalidir
   }
 
   container_definitions = jsonencode([
-    {
+    merge({
       name      = "app"
       image     = "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
       essential = true
@@ -77,6 +77,11 @@ resource "aws_ecs_task_definition" "app" {
         {
           name  = "MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE"
           value = "health,info,metrics,prometheus"
+        },
+        {
+          # test-backend/CorsConfig.java bunu oxuyur (app.cors.allowed-origins)
+          name  = "CORS_ALLOWED_ORIGINS"
+          value = var.cors_allowed_origins
         }
       ]
 
@@ -92,15 +97,6 @@ resource "aws_ecs_task_definition" "app" {
         }
       ]
 
-      # Container-in oz health check-i (ALB-dekinden ayridir)
-      healthCheck = {
-        command     = ["CMD-SHELL", "curl -f http://localhost:${var.container_port}${var.health_check_path} || exit 1"]
-        interval    = 30
-        timeout     = 5
-        retries     = 3
-        startPeriod = 90 # Spring Boot + Flyway acilmasi ucun vaxt
-      }
-
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -112,7 +108,22 @@ resource "aws_ecs_task_definition" "app" {
 
       # SIGTERM gelende Spring Boot graceful shutdown etsin
       stopTimeout = 30
-    }
+      },
+      # Container-in oz health check-i (ALB-dekinden ayridir, k8s-de livenessProbe).
+      # Default olaraq SONDURULUB: `curl` image-in icinde olmasa exit 127 qaytarir,
+      # container UNHEALTHY olur, ECS onu oldurur -> sonsuz restart dovresi.
+      #
+      # ../test-backend/Dockerfile curl-u QURUR, ona gore bu layihe ucun
+      # enable_container_healthcheck = true etmek tehlukesizdir.
+      var.enable_container_healthcheck ? {
+        healthCheck = {
+          command     = ["CMD-SHELL", "curl -f http://localhost:${var.container_port}${var.health_check_path} || exit 1"]
+          interval    = 30
+          timeout     = 5
+          retries     = 3
+          startPeriod = 90 # Spring Boot + Hibernate schema update ucun vaxt
+        }
+    } : {})
   ])
 
   depends_on = [aws_secretsmanager_secret_version.db]

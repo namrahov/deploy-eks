@@ -35,14 +35,26 @@ resource "aws_db_subnet_group" "main" {
   tags = { Name = "${var.project}-db-subnets" }
 }
 
+locals {
+  # "16" -> postgres16, "16.14" -> postgres16. Versiya deyisende family de deyisir.
+  db_major_version   = split(".", var.db_engine_version)[0]
+  db_parameter_group = "postgres${local.db_major_version}"
+}
+
 resource "aws_db_parameter_group" "main" {
-  name   = "${var.project}-pg16"
-  family = "postgres16"
+  name   = "${var.project}-pg${local.db_major_version}"
+  family = local.db_parameter_group
 
   # Yavas sorgulari loglamaq (1 saniyeden uzun)
   parameter {
     name  = "log_min_duration_statement"
     value = "1000"
+  }
+
+  # Major versiyani deyisende kohnesi hele instance-a bagli olur:
+  # evvel yenisi yaradilmalidir, yoxsa "parameter group is in use" xetasi.
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
