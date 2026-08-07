@@ -24,6 +24,10 @@ db_instance_class    = "db.t4g.micro"
 db_allocated_storage = 20
 db_multi_az          = false
 
+# Bu hesab Free Tier planindadir: backup / storage autoscaling / Performance Insights
+# bloklanir. Hesabi paid plan-a kecirende false et.
+free_tier_account = true
+
 # Yalniz major versiya -> RDS en son minor-u secir (hazirda 16.14)
 db_engine_version = "16"
 

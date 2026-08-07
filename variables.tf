@@ -129,6 +129,24 @@ variable "db_engine_version" {
   default     = "16"
 }
 
+variable "free_tier_account" {
+  description = <<-EOT
+    AWS "Free Tier" planindaki hesablar RDS-in bir sira funksiyalarini bloklayir
+    ve apply `FreeTierRestrictionError` ile dusur.
+    true  -> avtomatik backup, storage autoscaling ve Performance Insights sondurulur.
+    false -> hamisi aciq (hesabi paid plan-a kecirmisense).
+    Yoxlamaq: AWS Console -> Billing -> Free tier / Account plan.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "db_backup_retention_period" {
+  description = "Gun sayi. Yalniz free_tier_account = false olanda tetbiq olunur."
+  type        = number
+  default     = 7
+}
+
 variable "db_multi_az" {
   description = "Prod-da true. Test ucun false (2 defe ucuz)."
   type        = bool
