@@ -91,6 +91,27 @@ aws rds describe-db-engine-versions --engine postgres --region eu-north-1 \
 Mövcud olmayan versiya `Cannot find version 16.x for postgres` xətası verir —
 özü də RDS yaradılan anda, yəni digər resurslar artıq qurulandan sonra.
 
+**Hesab Free Tier planındadırsa** `terraform.tfvars`-da `free_tier_account = true` qalsın.
+Əks halda RDS `FreeTierRestrictionError` verir — backup, storage autoscaling və
+Performance Insights bloklanır. Paid plan-a keçəndə `false` et.
+
+### PowerShell qeydləri
+
+IntelliJ-in terminalı Windows-da PowerShell işə salır (prompt `PS C:\...>` ilə başlayır).
+Orada iki şey fərqlidir:
+
+```powershell
+# 1) -target= / -var= arqumentini BÜTÖV dırnağa al, yoxsa PowerShell onu parçalayır
+#    ("Invalid target" xətası)
+terraform apply '-target=aws_ecr_repository.app'
+
+# 2) curl deyil, curl.exe — `curl` PowerShell-də Invoke-WebRequest üçün alias-dır
+curl.exe "$url/actuator/health"
+```
+
+Git Bash-a keçsən (`Settings → Tools → Terminal → Shell path` →
+`C:\Program Files\Git\bin\bash.exe`) heç bir dırnaq lazım deyil.
+
 ### 1) Əvvəl yalnız ECR yarat
 
 ```bash
@@ -124,9 +145,66 @@ cd ../deploy-eks
 
 ```bash
 terraform apply          # RDS ~10 dəqiqə çəkir
+```
 
+### 4) Yoxlama
+
+**Base URL-i götür:**
+
+```bash
 terraform output app_url
-terraform output -raw logs_command      # loqları izlə
+# http://test-backend-alb-2090795029.eu-north-1.elb.amazonaws.com
+```
+
+**Əvvəlcə infrastruktur sağdırmı — HTTP atmazdan qabaq bunu yoxla.**
+Task-lar qalxmayıbsa aşağıdakı `curl`-lar timeout verəcək və səbəbi görünməyəcək:
+
+```bash
+aws ecs describe-services --cluster test-backend-cluster \
+  --services test-backend-service --region eu-north-1 \
+  --query "services[0].{running:runningCount,desired:desiredCount,deploy:deployments[0].rolloutState}"
+```
+
+Gözlənilən: `running = desired = 2`, `rolloutState = COMPLETED`.
+
+**Endpoint-lər (PowerShell):**
+
+```powershell
+$url = terraform output -raw app_url
+
+curl.exe "$url/actuator/health"
+
+Invoke-RestMethod -Uri "$url/api/messages" -Method Post `
+  -ContentType "application/json" -Body '{"text":"hello from ecs"}'
+
+Invoke-RestMethod -Uri "$url/api/messages"
+```
+
+Eyni şey bash-da:
+
+```bash
+URL=$(terraform output -raw app_url)
+curl -s "$URL/actuator/health"
+curl -s -X POST "$URL/api/messages" -H "Content-Type: application/json" -d '{"text":"hello from ecs"}'
+curl -s "$URL/api/messages"
+```
+
+Gözlənilən cavablar:
+
+| Sorğu | Cavab |
+|---|---|
+| `GET /actuator/health` | `200` `{"status":"UP","groups":["liveness","readiness"]}` |
+| `POST /api/messages` | `201` `{"id":1,"text":"...","createdAt":"..."}` |
+| `GET /api/messages` | `200` — yazılan sətir qayıdır |
+| `GET /actuator/prometheus` | **`404` — bu düzgündür**, `alb.tf` bloklayır |
+
+`POST`-un qaytardığı `id` bütün zəncirin işlədiyinin sübutudur:
+internet → ALB → Fargate task → RDS Postgres, parol isə Secrets Manager-dən.
+
+**Loqlar:**
+
+```bash
+aws logs tail /ecs/test-backend --follow --region eu-north-1
 ```
 
 ### Sonrakı deploy-lar
@@ -146,8 +224,13 @@ terraform destroy
 ```
 
 `force_delete`, `skip_final_snapshot`, `recovery_window_in_days = 0` təyin olunduğu üçün
-destroy təmiz keçir. Yalnız RDS-in `/aws/rds/instance/.../postgresql` log qrupu qalır —
-onu əl ilə sil.
+destroy təmiz keçir.
+
+`free_tier_account = false` etmisənsə RDS-in `/aws/rds/instance/.../postgresql` log qrupu
+geridə qalır — onu əl ilə sil. Free tier rejimində o log export onsuz da sönülüdür.
+
+⚠️ **İş bitəndə mütləq destroy et.** ALB və RDS trafik olmasa da saatlıq pul yeyir
+(~$73/ay), `terraform destroy` isə yeganə dayandırma yoludur.
 
 ## Postgres-i necə nəzərə aldıq — vacib məqamlar
 
