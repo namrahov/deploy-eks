@@ -1,0 +1,25 @@
+# ---------- Terraform ----------
+# State faylinda DB parolu ACIQ METN kimi durur - hec vaxt commit etme.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.tfstate.lock.info
+crash.log
+crash.*.log
+
+# Real deyerler (parol, hesab ID, domain...). Yalniz .example commit olunur.
+terraform.tfvars
+*.auto.tfvars
+!terraform.tfvars.example
+
+# Plan faylinda da hessas deyerler olur
+*.tfplan
+tfplan
+
+# Provider versiyalarini sabitleyir - BU FAYL COMMIT OLUNMALIDIR:
+# !.terraform.lock.hcl
+
+# ---------- Local ----------
+.env
+*.pem
