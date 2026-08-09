@@ -55,8 +55,9 @@ resource "aws_db_instance" "main" {
   engine_version = var.db_engine_version
   instance_class = var.db_instance_class
 
-  allocated_storage     = var.db_allocated_storage
-  max_allocated_storage = 100
+  allocated_storage = var.db_allocated_storage
+  # Free tier planinda saxlama 20 GB ile mehduddur -> autoscaling sonduruk (0 = sonulu)
+  max_allocated_storage = var.free_tier_account ? 0 : 100
   storage_type          = "gp3"
   storage_encrypted     = true
 
@@ -70,9 +71,19 @@ resource "aws_db_instance" "main" {
   publicly_accessible    = false
   multi_az               = var.db_multi_az
 
-  backup_retention_period         = 7
-  performance_insights_enabled    = var.db_performance_insights
-  enabled_cloudwatch_logs_exports = ["postgresql"]
+  # Free tier hesab avtomatik backup-a icaze vermir:
+  #   FreeTierRestrictionError: The specified backup retention period exceeds
+  #   the maximum available to free tier customers.
+  # 0 = avtomatik backup sondurulub (point-in-time recovery YOXDUR).
+  backup_retention_period = var.free_tier_account ? 0 : var.db_backup_retention_period
+  backup_window           = var.free_tier_account ? null : "03:00-04:00"
+  maintenance_window      = "sun:04:00-sun:05:00"
+
+  # Performance Insights IKI ayri sebebden bloklana biler:
+  #   1) free tier plani, 2) kicik instance class (db.t4g.micro/small).
+  # Ona gore hem bayraq, hem de plan yoxlanilir.
+  performance_insights_enabled    = var.db_performance_insights && !var.free_tier_account
+  enabled_cloudwatch_logs_exports = var.free_tier_account ? [] : ["postgresql"]
 
   skip_final_snapshot = true  # prod-da false
   deletion_protection = false # prod-da true
