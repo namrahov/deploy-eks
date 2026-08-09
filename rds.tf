@@ -26,6 +26,12 @@ resource "aws_secretsmanager_secret_version" "db" {
 # ---------- Security group ----------
 # ECS-den ferq: burada menbe EKS node-larinin SG-sidir.
 # Auto Mode-da da node-lar cluster primary SG-ni alir.
+#
+# DIQQET - SG description-lari ucun AWS-in oz simvol siyahisi var:
+#   ^[0-9A-Za-z_ .:/()#,@\[\]+=&;{}!$*-]*$
+# Yeni ox "->" YAZMA: `<` ve `>` bu siyahida YOXDUR ve apply
+#   "doesn't comply with restrictions" ile dusur.
+# Eyni sey `_` ve `-` ucun problem deyil, ancaq oxu sozle yaz: "to".
 
 resource "aws_security_group" "rds" {
   name        = "${var.project}-rds-sg"
@@ -33,7 +39,7 @@ resource "aws_security_group" "rds" {
   vpc_id      = module.vpc.vpc_id
 
   ingress {
-    description     = "EKS nodes -> Postgres"
+    description     = "EKS nodes to Postgres"
     from_port       = 5432
     to_port         = 5432
     protocol        = "tcp"
