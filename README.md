@@ -13,7 +13,7 @@ Bu ən vacib məsləhətdir. React/Vue build çıxışı sadəcə fayldır. Onu 
 
 S3 + CloudFront-da: ~$1/ay, global CDN, yamaq yoxdur, `aws s3 sync` ilə deploy.
 
-`k8s/03-frontend.yaml` yenə də daxildədir — **öyrənmək üçün**. Kubernetes-də Deployment/Service/ConfigMap/volume mount necə işləyir, bunu görmək dəyərlidir. Amma prod-da CloudFront-a keç.
+`../test-frontend/03-frontend.yaml` yenə də daxildədir — **öyrənmək üçün**. Kubernetes-də Deployment/Service/ConfigMap/volume mount necə işləyir, bunu görmək dəyərlidir. Amma prod-da CloudFront-a keç.
 
 **İstisna:** Next.js/Nuxt kimi SSR-dırsa, o artıq server prosesidir — həqiqətən EKS-də olmalıdır.
 
@@ -53,8 +53,8 @@ Internet
    │
    ▼
  ALB  (Ingress ilə yaradılır, target-type: ip)
-   ├── /api/*, /actuator/*  ──► Service backend  ──► Pod (Spring Boot)
-   └── /*                   ──► Service frontend ──► Pod (nginx)
+   ├── /api/*  ──► Service backend  ──► Pod (Spring Boot)
+   └── /*      ──► Service frontend ──► Pod (nginx)
                                      │
                         ┌────────────┘
                         ▼
@@ -64,39 +64,98 @@ Internet
         Secrets Manager ─┴─► External Secrets Operator ──► k8s Secret
 ```
 
+## Fayllar harada yerləşir
+
+Manifestlər **üç repo arasında bölünüb** — hər tətbiqin manifesti öz repo-sundadır:
+
+| Fayl | Repo |
+|---|---|
+| `*.tf`, `00-namespace.yaml`, `01-external-secret.yaml`, `04-ingress.yaml`, `05-networkpolicy.yaml` | `deploy-eks` (bu repo, kök qovluq) |
+| `02-backend.yaml` | `../test-backend` |
+| `03-frontend.yaml` | `../test-frontend` |
+
+Ayrı `terraform/` və `k8s/` qovluğu **yoxdur** — Terraform faylları kökdədir.
+
 ## Deploy sırası
 
 ```bash
-cd terraform
 cp terraform.tfvars.example terraform.tfvars   # redaktə et
-
 terraform init
 
 # 1) Əvvəl ECR (image-siz pod işə düşməz)
 terraform apply -target=aws_ecr_repository.app
 
 # 2) Image-ləri push et
-terraform output ecr_login          # çıxan əmri işlət
-docker build -t backend ./backend && docker tag ... && docker push ...
+terraform output -raw ecr_login          # çıxan əmri işlət (docker login)
+
+BE=$(terraform output -raw ecr_backend_url)
+FE=$(terraform output -raw ecr_frontend_url)
+
+cd ../test-backend
+docker build --platform linux/amd64 -t $BE:v1.0.0 . && docker push $BE:v1.0.0
+sed -i "s|newName: .*|newName: $BE|" kustomization.yaml
+
+cd ../test-frontend
+docker build --platform linux/amd64 -t $FE:v1.0.0 . && docker push $FE:v1.0.0
+sed -i "s|newName: .*|newName: $FE|" kustomization.yaml
 
 # 3) Qalanını qur (EKS ~15 dəq, RDS ~10 dəq — paralel gedir)
+cd ../deploy-eks
 terraform apply
 
 # 4) kubectl konfiqurasiyası
-$(terraform output -raw configure_kubectl)
+$(terraform output -raw configure_kubectl)      # PowerShell: Invoke-Expression (terraform output -raw configure_kubectl)
 kubectl get nodes        # Auto Mode-da pod deploy edənə qədər node görünməyə bilər
 
-# 5) Manifestləri tətbiq et
-cd ../k8s
-# 01-external-secret.yaml → secret adını və region-u düzəlt
-# 02, 03 → <ECR_*_URL> yerinə real URL
-kubectl apply -f .
+# 5) Manifestləri tətbiq et — SIRA VACIBDIR
+#    01-external-secret.yaml → remoteRef.key `terraform output -raw db_secret_name` ilə eyni olmalıdır
+kubectl apply -f 00-namespace.yaml
+kubectl apply -f 01-external-secret.yaml
+kubectl apply -k ../test-backend     # -k, -f DEYIL: image adını kustomize qoyur
+kubectl apply -k ../test-frontend
+kubectl apply -f 04-ingress.yaml
+kubectl apply -f 05-networkpolicy.yaml
 
 # 6) Yoxla
 kubectl get externalsecret -n app        # STATUS: SecretSynced olmalıdır
 kubectl get pods -n app -w
+kubectl get hpa -n app                   # TARGETS <unknown> deyil, faiz göstərməlidir
 kubectl get ingress -n app               # ADDRESS sütunu 2-3 dəq sonra dolur
 ```
+
+`00-namespace.yaml` mütləq birinci gedir: ServiceAccount `backend` olmasa pod
+`error looking up service account app/backend` ilə heç işə düşmür.
+
+PowerShell-də `sed` yoxdur — 2-ci addımdakı iki `sed` sətrinin qarşılığı:
+
+```powershell
+$BE = terraform output -raw ecr_backend_url
+$FE = terraform output -raw ecr_frontend_url
+
+cd ..\test-backend
+docker build --platform linux/amd64 -t "${BE}:v1.0.0" . ; docker push "${BE}:v1.0.0"
+(Get-Content kustomization.yaml) -replace 'newName: .*', "newName: $BE" | Set-Content kustomization.yaml -Encoding utf8
+
+cd ..\test-frontend
+docker build --platform linux/amd64 -t "${FE}:v1.0.0" . ; docker push "${FE}:v1.0.0"
+(Get-Content kustomization.yaml) -replace 'newName: .*', "newName: $FE" | Set-Content kustomization.yaml -Encoding utf8
+```
+
+### Image adı niyə `kustomization.yaml`-dadır
+
+`02-backend.yaml`-da əvvəl `image: <ECR_BACKEND_URL>:v1.0.0` yazılırdı. Bu, **etibarlı
+image adı deyil** (`<` və `>` icazəli simvol deyil), amma Kubernetes image sətrini
+apply anında yoxlamır — `kubectl apply` səssizcə uğurla bitir, pod isə sonra
+`InvalidImageName` vəziyyətində ilişib qalır. Yəni əvəz etməyi unutsan, xətanı
+`kubectl apply`-dan deyil, `kubectl describe pod`-dan öyrənirsən.
+
+İndi manifestin özü etibarlı sənəddir, hesaba bağlı yeganə dəyər isə
+`kustomization.yaml`-dakı `newName`-dir. Bir də: `kustomize` Argo CD-nin
+(§"Növbəti addımlar") təbii giriş formatıdır, ona görə bu addım GitOps-a keçidi
+ucuzlaşdırır.
+
+**Vacib:** bu iki manifest artıq `-k` ilə tətbiq olunur. `kubectl apply -f 02-backend.yaml`
+işlədsən image əvəz olunmur və pod `ErrImagePull` alır.
 
 ## ECS → k8s: kod səviyyəsində qarşılıq
 
@@ -114,7 +173,7 @@ kubectl get ingress -n app               # ADDRESS sütunu 2-3 dəq sonra dolur
 | container `healthCheck` | `livenessProbe` | `02-backend.yaml` |
 | TG health check | `readinessProbe` | `02-backend.yaml` |
 | `aws_appautoscaling_policy` | HorizontalPodAutoscaler | `02-backend.yaml` |
-| ECS task role | Pod Identity + ServiceAccount | `external-secrets.tf` |
+| ECS task role | Pod Identity + ServiceAccount | `external-secrets.tf` + `00-namespace.yaml` |
 | `deployment_circuit_breaker` | `kubectl rollout undo` / Argo Rollouts | — |
 | `enable_execute_command` | `kubectl exec` | — |
 | SG-lər arası zəncir | NetworkPolicy | `05-networkpolicy.yaml` |
@@ -143,7 +202,26 @@ Spring Boot-da `management.endpoint.health.probes.enabled: true` yazsan `/actuat
 
 **6. Subnet tag-ları.** `vpc.tf`-də `kubernetes.io/role/elb` və `internal-elb`. Bunlar olmasa Ingress ALB yarada bilmir və `unable to discover subnets` xətası verir. EKS-də ən çox ilişilən yer budur.
 
-## Xərc (təxmini, eu-central-1)
+**7. `/actuator` internetə açılmır.** Ingress-də yalnız `/api` və `/` qaydası var.
+`management...exposure.include` siyahısında `metrics` və `prometheus` var — onları
+ALB-dən açsan endpoint adlarını, JVM/DB metrikalarını və trafik həcmini kənar adama
+vermiş olursan. ALB health check-i **target group səviyyəsindədir**, Ingress
+qaydasından asılı deyil, ona görə bu yolun bağlı olması probe-ları sındırmır.
+Prometheus scrape-i cluster daxilindən `Service backend:80/actuator/prometheus`
+üzərindən edilir.
+
+**8. Health check yolu Service-dədir, Ingress-də yox.** `alb.ingress.kubernetes.io/healthcheck-path`
+Ingress-ə yazılsa **hər iki** target group-a şamil olunur və birinin health check-i
+mütləq düşür (backend `/actuator/health/readiness`, frontend `/healthz`). Ona görə
+annotation hər Service-in üstündədir. Default `/` qalsaydı, Spring 404 qaytarardı,
+`success-codes: "200"` ilə uyğun gəlməzdi və `/api` daim 503 verərdi.
+
+**9. metrics-server Auto Mode-a daxil deyil.** Auto Mode CoreDNS, kube-proxy, VPC CNI,
+EBS CSI və ALB controller-i idarə edir, **metrics-server-i yox**. O olmasa HPA
+`TARGETS: <unknown>/70%` göstərir və heç vaxt scale etmir. `metrics-server.tf` onu
+Helm ilə qurur.
+
+## Xərc (təxmini, eu-north-1)
 
 | Resurs | ~$/ay |
 |---|---|

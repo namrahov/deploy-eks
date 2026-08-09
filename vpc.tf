@@ -14,8 +14,8 @@ module "vpc" {
   cidr = var.vpc_cidr
   azs  = local.azs
 
-  public_subnets  = [for i in range(2) : cidrsubnet(var.vpc_cidr, 8, i)]
-  private_subnets = [for i in range(2) : cidrsubnet(var.vpc_cidr, 8, i + 10)]
+  public_subnets   = [for i in range(2) : cidrsubnet(var.vpc_cidr, 8, i)]
+  private_subnets  = [for i in range(2) : cidrsubnet(var.vpc_cidr, 8, i + 10)]
   database_subnets = [for i in range(2) : cidrsubnet(var.vpc_cidr, 8, i + 20)]
 
   create_database_subnet_group = true

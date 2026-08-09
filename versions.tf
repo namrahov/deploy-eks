@@ -19,10 +19,8 @@ provider "aws" {
 }
 
 # EKS-e qosulma. exec plugin token-i her defe yeniden alir (token 15 deq yasayir).
-data "aws_eks_cluster_auth" "this" {
-  name = module.eks.cluster_name
-}
-
+# aws_eks_cluster_auth data source-u BILEREKDEN yoxdur: exec plugin onsuz da
+# token alir, data source ise yalniz plan merhelesinde artiq asililiq yaradirdi.
 provider "kubernetes" {
   host                   = module.eks.cluster_endpoint
   cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)

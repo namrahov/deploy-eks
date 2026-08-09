@@ -17,8 +17,8 @@ terraform.tfvars
 *.tfplan
 tfplan
 
-# Provider versiyalarini sabitleyir - BU FAYL COMMIT OLUNMALIDIR:
-# !.terraform.lock.hcl
+# QEYD: .terraform.lock.hcl BURADA SADALANMIR - cunki o COMMIT OLUNMALIDIR.
+# Provider versiyalarini sabitleyir; komandada herkes eyni versiyani alir.
 
 # ---------- Local ----------
 .env

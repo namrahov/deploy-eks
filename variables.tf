@@ -1,6 +1,10 @@
 variable "project" {
+  # DIQQET: bu ad Secrets Manager secret-inin adina girir
+  # ("<project>/db-credentials") ve 01-external-secret.yaml-da ELLE yazilib.
+  # Deyisdirsen hemin faylda remoteRef.key-leri de deyis, yoxsa
+  # ExternalSecret "SecretSyncedError" verir ve backend pod-lari acilmir.
   type    = string
-  default = "springboot-eks"
+  default = "my-springboot-eks"
 }
 
 variable "region" {
@@ -47,8 +51,21 @@ variable "db_instance_class" {
 }
 
 variable "db_engine_version" {
+  # Yalniz major versiya yazilir: RDS hemin major-un en son minor-unu secir.
+  # "16.4" kimi deqiq minor yazsan, AWS onu deprecate edende apply xeta verir.
   type    = string
-  default = "16.4"
+  default = "16"
+}
+
+variable "db_performance_insights" {
+  description = <<-EOT
+    Performance Insights kicik instance-larda DESTEKLENMIR:
+    db.t2/t3/t4g .micro ve .small. db.t4g.micro-da true etsen apply
+    "InvalidParameterCombination" ile dusur.
+    db.t4g.medium ve yuxari kecende true et.
+  EOT
+  type        = bool
+  default     = false
 }
 
 variable "db_multi_az" {

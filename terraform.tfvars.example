@@ -10,3 +10,7 @@ db_name           = "appdb"
 db_username       = "appuser"
 db_instance_class = "db.t4g.micro"
 db_multi_az       = false
+
+# db.t4g.micro/small-da Performance Insights DESTEKLENMIR - true etsen
+# apply "InvalidParameterCombination" ile dusur. Instance boyudende ac.
+db_performance_insights = false

@@ -24,10 +24,22 @@ module "eks" {
   # ---------- AUTO MODE ----------
   # Node group yoxdur. Karpenter, VPC CNI, CoreDNS, kube-proxy,
   # EBS CSI ve ALB controller AWS terefinden idare olunur.
+  #
+  # DIQQET: ternary-nin HER IKI terefi EYNI atributlara malik olmalidir.
+  # `: {}` yazsan `terraform validate` "Inconsistent conditional result types"
+  # verir - cunki bos obyekt {enabled=bool, node_pools=list} tipine uygunlasmir.
+  # Ona gore false terefinde de eyni acarlar var, sadece enabled = false.
   cluster_compute_config = var.use_auto_mode ? {
-    enabled    = true
-    node_pools = ["general-purpose"] # GPU lazimdirsa: ["general-purpose", "system"]
-  } : {}
+    enabled = true
+    # "general-purpose" adi is yuku ucundur.
+    # "system" ayrica, CriticalAddonsOnly taint-i ile gelen pool-dur - onu
+    # yalniz sistem komponentlerini is yukunden ayirmaq isteyende elave et.
+    # (GPU-nun bu siyahi ile elaqesi yoxdur, Auto Mode onu ayrica idare edir.)
+    node_pools = ["general-purpose"]
+    } : {
+    enabled    = false
+    node_pools = []
+  }
 
   # ---------- KLASSIK NODE GROUP (use_auto_mode = false olanda) ----------
   eks_managed_node_groups = var.use_auto_mode ? {} : {

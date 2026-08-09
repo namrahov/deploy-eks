@@ -39,6 +39,12 @@ metadata:
     # Butun Ingress-ler eyni ALB-ni paylassin (pula qenaet)
     alb.ingress.kubernetes.io/group.name: app
 
+    # QEYD: healthcheck-path BURADA teyin olunmur, cunki backend ve frontend
+    # ucun ferqlidir. Hemin annotation her Service-in ustundedir
+    # (test-backend/02-backend.yaml, test-frontend/03-frontend.yaml).
+    # Burada teyin etsen HER IKI target group ucun eyni yol islenir ve
+    # birinin health check-i mutleq dusur.
+
     # ---- HTTPS (ACM sertifikat oldugda serhi ac) ----
     # alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
     # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:...
@@ -56,13 +62,12 @@ spec:
                 name: backend
                 port:
                   number: 80
-          - path: /actuator
-            pathType: Prefix
-            backend:
-              service:
-                name: backend
-                port:
-                  number: 80
+          # /actuator BILEREKDEN internete acilmir: exposure siyahisinda
+          # metrics ve prometheus var - onlar endpoint adlarini, JVM/DB
+          # metrikalarini ve trafik hecmini kenar adama verir.
+          # ALB health check-i target group seviyyesindedir, Ingress
+          # qaydasindan asili deyil - ona gore bu yolu silmek probe-lari sindirmir.
+          # Prometheus scrape cluster daxilinden Service uzerinden edilir.
           - path: /
             pathType: Prefix
             backend:

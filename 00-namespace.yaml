@@ -3,9 +3,12 @@ kind: Namespace
 metadata:
   name: app
 ---
-# Pod Identity bu ServiceAccount-a baglanib (terraform/external-secrets.tf)
+# DIQQET: bu adi deyisdirsen 3 yerde birden deyismelisen, yoxsa pod acilmir:
+#   - external-secrets.tf -> aws_eks_pod_identity_association.backend.service_account
+#   - test-backend/02-backend.yaml -> spec.template.spec.serviceAccountName
+#   - bu fayl
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: test-backend
+  name: backend
   namespace: app

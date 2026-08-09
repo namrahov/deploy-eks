@@ -65,10 +65,10 @@ resource "aws_db_instance" "main" {
   multi_az               = var.db_multi_az
 
   backup_retention_period         = 7
-  performance_insights_enabled    = true
+  performance_insights_enabled    = var.db_performance_insights
   enabled_cloudwatch_logs_exports = ["postgresql"]
 
-  skip_final_snapshot = true # prod-da false
+  skip_final_snapshot = true  # prod-da false
   deletion_protection = false # prod-da true
   apply_immediately   = true
 
