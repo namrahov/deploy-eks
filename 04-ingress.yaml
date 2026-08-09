@@ -1,0 +1,72 @@
+# =========================================================================
+# EKS AUTO MODE ucun. Auto Mode-da ALB controller quraşdırılmış gəlir.
+# Klassik EKS istifade edirsense:
+#   - AWS Load Balancer Controller-i Helm ile qur
+#   - controller: ingress.k8s.aws/alb  (asagidaki eks.amazonaws.com/alb evezine)
+#   - IngressClassParams-a ehtiyac yoxdur, annotation-lar kifayetdir
+# =========================================================================
+apiVersion: eks.amazonaws.com/v1
+kind: IngressClassParams
+metadata:
+  name: alb
+spec:
+  scheme: internet-facing
+---
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: alb
+  annotations:
+    ingressclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: eks.amazonaws.com/alb
+  parameters:
+    apiGroup: eks.amazonaws.com
+    kind: IngressClassParams
+    name: alb
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+  namespace: app
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # "ip" = trafik birbasa pod-a gedir (NodePort hop-u yoxdur)
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    alb.ingress.kubernetes.io/success-codes: "200"
+    # Butun Ingress-ler eyni ALB-ni paylassin (pula qenaet)
+    alb.ingress.kubernetes.io/group.name: app
+
+    # ---- HTTPS (ACM sertifikat oldugda serhi ac) ----
+    # alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:...
+    # alb.ingress.kubernetes.io/ssl-redirect: "443"
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          # SIRA VACIBDIR: spesifik yol umumi yoldan evvel gelmelidir
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 80
+          - path: /actuator
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

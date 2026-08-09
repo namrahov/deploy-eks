@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app
+---
+# Pod Identity bu ServiceAccount-a baglanib (terraform/external-secrets.tf)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: test-backend
+  namespace: app

@@ -1,4 +1,50 @@
-# Spring Boot + Postgres → ECS Fargate + ALB (Terraform)
+# Frontend + Spring Boot + RDS Postgres → EKS
+
+## Əvvəlcə: 4 yerdə fərqli təklifim var
+
+### 1. Frontend-i EKS-ə salma (statikdirsə)
+
+Bu ən vacib məsləhətdir. React/Vue build çıxışı sadəcə fayldır. Onu pod-da nginx ilə paylamaq üçün ödəyəcəyin qiymət:
+
+- 2 pod × yaddaş/CPU — daimi
+- ALB target group, health check, deploy pipeline
+- nginx image-inin CVE yamaqları — sənin məsuliyyətin
+- CDN yoxdur → Bakıdan da, Berlindən də eyni tək region-a gedilir
+
+S3 + CloudFront-da: ~$1/ay, global CDN, yamaq yoxdur, `aws s3 sync` ilə deploy.
+
+`k8s/03-frontend.yaml` yenə də daxildədir — **öyrənmək üçün**. Kubernetes-də Deployment/Service/ConfigMap/volume mount necə işləyir, bunu görmək dəyərlidir. Amma prod-da CloudFront-a keç.
+
+**İstisna:** Next.js/Nuxt kimi SSR-dırsa, o artıq server prosesidir — həqiqətən EKS-də olmalıdır.
+
+### 2. Managed node group əvəzinə EKS Auto Mode
+
+<cite index="8-1">AWS 2024-cü ilin dekabrında EKS Auto Mode-u elan etdi — compute, storage və şəbəkə idarəçiliyini tam avtomatlaşdıran rejim.</cite> <cite index="6-1">Praktikada bu o deməkdir ki, Karpenter, VPC CNI, EBS CSI, CoreDNS və kube-proxy AWS tərəfindən idarə olunur; nə node group konfiqurasiya edirsən, nə də addon quraşdırırsan.</cite>
+
+<cite index="2-1">Node həyat dövrünü Karpenter idarə edir: gözləyən pod-lar üçün ölçüsü uyğun instance yaradır, az istifadə olunan node-ları birləşdirib xərci azaldır.</cite>
+
+Sənin üçün nə dəyişir: AMI yeniləmələri, node drain, cluster-autoscaler tənzimləmə, addon versiya uyğunluğu — bunların heç biri sənin işin deyil. `var.use_auto_mode = false` etsən klassik node group qurulur (daxili mexanizmi görmək üçün faydalıdır).
+
+**Nə vaxt Auto Mode uyğun gəlmir:** node-a özəl AMI, DaemonSet-lə aşağı səviyyəli agent, spesifik kernel parametrləri lazımdırsa.
+
+### 3. IRSA əvəzinə EKS Pod Identity
+
+IRSA-da OIDC provider, JSON trust policy və ServiceAccount annotation-u lazım idi. Pod Identity-də sadəcə rol yaradırsan və association ilə namespace/ServiceAccount cütünə bağlayırsan. Kodda müqayisə üçün hər ikisinin fərqi `external-secrets.tf`-də şərh edilib.
+
+### 4. Manifestləri Terraform-la idarə etmə
+
+Terraform **infrastruktur** üçündür: VPC, EKS, RDS, IAM. Tətbiq manifestləri üçün `kubernetes_manifest` resursu istifadə etmə — Terraform CRD-ləri plan mərhələsində bilmir, `terraform plan` cluster-ə qoşulmağa məcbur olur, və deploy sürəti dəhşətli olur.
+
+Düzgün ayrım:
+
+```
+Terraform  →  VPC, EKS, RDS, IAM, ECR, cluster-səviyyə Helm chart-lar
+kubectl/Helm/Argo CD  →  Deployment, Service, Ingress, ConfigMap
+```
+
+Növbəti addım olaraq **Argo CD** (GitOps) — yol xəritəndə onsuz da var.
+
+---
 
 ## Arxitektura
 
@@ -6,316 +52,114 @@
 Internet
    │
    ▼
- ALB  (public subnets, SG: 80 ← 0.0.0.0/0; 443 şərh içindədir, ACM sertifikatı olanda açılır)
-   │  target group, health check → /actuator/health
-   │  listener rule: /actuator/* → 404  (yalnız health endpoint keçir)
-   ▼
- ECS Service (Fargate)  ── 2..8 task, autoscaling CPU 70%
-   │  SG: 8080 ← yalnız ALB SG
-   ▼
- RDS Postgres  (private subnets, SG: 5432 ← yalnız ECS SG, publicly_accessible = false)
-
- ECR ← docker image
- Secrets Manager → DB user/password (task-a runtime-da injeksiya olunur)
- CloudWatch Logs ← stdout
+ ALB  (Ingress ilə yaradılır, target-type: ip)
+   ├── /api/*, /actuator/*  ──► Service backend  ──► Pod (Spring Boot)
+   └── /*                   ──► Service frontend ──► Pod (nginx)
+                                     │
+                        ┌────────────┘
+                        ▼
+              RDS Postgres (database subnets, private)
+                        ▲
+                        │ parol
+        Secrets Manager ─┴─► External Secrets Operator ──► k8s Secret
 ```
-
-## Fayllar
-
-| Fayl | Nə var |
-|---|---|
-| `versions.tf` | provider, state backend nümunəsi |
-| `variables.tf` | bütün parametrlər |
-| `vpc.tf` | VPC, 2 public + 2 private subnet, IGW, opsional NAT |
-| `security_groups.tf` | ALB → ECS → RDS zənciri |
-| `ecr.tf` | docker registry + lifecycle policy |
-| `rds.tf` | Postgres, random parol, Secrets Manager |
-| `alb.tf` | load balancer, target group, listener, actuator qoruması |
-| `iam.tf` | execution role + task role |
-| `ecs.tf` | cluster, task definition, service, autoscaling |
-| `outputs.tf` | URL-lər, push/redeploy əmrləri |
-| `.gitignore` | state və `terraform.tfvars` git-ə düşməsin |
-
-Tətbiq tərəfi ayrı repodadır — nüsxə saxlamırıq ki, ikisi bir-birindən ayrı düşməsin:
-
-| Fayl | Nə var |
-|---|---|
-| `../test-backend/Dockerfile` | multi-stage Gradle build (Java 17) |
-| `../test-backend/src/main/resources/application-prod.yml` | ECS-də oxunan konfiqurasiya |
-| `../test-backend/docker-compose.yml` | lokal Postgres |
-
-## `test-backend` ilə müqavilə
-
-Bu iki repo bir-birinə **environment variable adları** ilə bağlıdır. Adlardan biri dəyişsə deploy səssizcə sınır, ona görə hər ikisini eyni anda redaktə et.
-
-| Dəyişən | Kim verir | Kim oxuyur |
-|---|---|---|
-| `SPRING_PROFILES_ACTIVE=prod` | `ecs.tf` | `application-prod.yml` faylını aktivləşdirir |
-| `SPRING_DATASOURCE_URL` | `ecs.tf` (RDS endpoint-dən) | `application-prod.yml` |
-| `SPRING_DATASOURCE_USERNAME` | Secrets Manager | `application-prod.yml` |
-| `SPRING_DATASOURCE_PASSWORD` | Secrets Manager | `application-prod.yml` |
-| `SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE` | `ecs.tf` (10) | `application-prod.yml` |
-| `SERVER_PORT` | `ecs.tf` (`container_port`) | `application-prod.yml` |
-| `MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE` | `ecs.tf` | `application-prod.yml` |
-| `CORS_ALLOWED_ORIGINS` | `ecs.tf` (`cors_allowed_origins`) | `CorsConfig.java` |
-| `JAVA_TOOL_OPTIONS` | `ecs.tf` | JVM |
-
-Diqqət yetiriləsi məqamlar:
-
-- **`application-prod.yml` `SPRING_DATASOURCE_URL`-i default-suz oxuyur** (`${SPRING_DATASOURCE_URL}`). Dəyər gəlməsə tətbiq açılışda düşür — səssiz `localhost`-a qoşulmaqdansa bu daha yaxşıdır.
-- **`prod` profili məcburidir.** `application.yml` lokal default-ları saxlayır, ECS-də isə `application-prod.yml` onu üstələyir.
-- **ECR repo adı = `var.project` = `test-backend`** — Gradle `rootProject.name` ilə eynidir, təsadüfi deyil.
-- **Java 17** (`build.gradle` toolchain) ↔ `eclipse-temurin:17` (Dockerfile). `task_memory = 1024` MiB, `MaxRAMPercentage=75` → ~768 MB heap.
 
 ## Deploy sırası
 
-⚠️ **ECR boş olarsa ECS task işə düşməyəcək.** Ona görə iki mərhələdə:
-
 ```bash
-cp terraform.tfvars.example terraform.tfvars   # dəyərləri redaktə et
+cd terraform
+cp terraform.tfvars.example terraform.tfvars   # redaktə et
 
 terraform init
-terraform validate
-```
 
-### 0) Ön yoxlama — Postgres versiyası
-
-RDS köhnə minor versiyaları region-dan silir. `db_engine_version = "16"` yazılıbsa
-AWS ən son minor-u özü seçir və problem olmur. Konkret minor yazacaqsansa əvvəl yoxla:
-
-```bash
-aws rds describe-db-engine-versions --engine postgres --region eu-north-1 \
-  --query "DBEngineVersions[?starts_with(EngineVersion,'16.')].EngineVersion" --output text
-```
-
-Mövcud olmayan versiya `Cannot find version 16.x for postgres` xətası verir —
-özü də RDS yaradılan anda, yəni digər resurslar artıq qurulandan sonra.
-
-**Hesab Free Tier planındadırsa** `terraform.tfvars`-da `free_tier_account = true` qalsın.
-Əks halda RDS `FreeTierRestrictionError` verir — backup, storage autoscaling və
-Performance Insights bloklanır. Paid plan-a keçəndə `false` et.
-
-### PowerShell qeydləri
-
-IntelliJ-in terminalı Windows-da PowerShell işə salır (prompt `PS C:\...>` ilə başlayır).
-Orada iki şey fərqlidir:
-
-```powershell
-# 1) -target= / -var= arqumentini BÜTÖV dırnağa al, yoxsa PowerShell onu parçalayır
-#    ("Invalid target" xətası)
-terraform apply '-target=aws_ecr_repository.app'
-
-# 2) curl deyil, curl.exe — `curl` PowerShell-də Invoke-WebRequest üçün alias-dır
-curl.exe "$url/actuator/health"
-```
-
-Git Bash-a keçsən (`Settings → Tools → Terminal → Shell path` →
-`C:\Program Files\Git\bin\bash.exe`) heç bir dırnaq lazım deyil.
-
-### 1) Əvvəl yalnız ECR yarat
-
-```bash
+# 1) Əvvəl ECR (image-siz pod işə düşməz)
 terraform apply -target=aws_ecr_repository.app
+
+# 2) Image-ləri push et
+terraform output ecr_login          # çıxan əmri işlət
+docker build -t backend ./backend && docker tag ... && docker push ...
+
+# 3) Qalanını qur (EKS ~15 dəq, RDS ~10 dəq — paralel gedir)
+terraform apply
+
+# 4) kubectl konfiqurasiyası
+$(terraform output -raw configure_kubectl)
+kubectl get nodes        # Auto Mode-da pod deploy edənə qədər node görünməyə bilər
+
+# 5) Manifestləri tətbiq et
+cd ../k8s
+# 01-external-secret.yaml → secret adını və region-u düzəlt
+# 02, 03 → <ECR_*_URL> yerinə real URL
+kubectl apply -f .
+
+# 6) Yoxla
+kubectl get externalsecret -n app        # STATUS: SecretSynced olmalıdır
+kubectl get pods -n app -w
+kubectl get ingress -n app               # ADDRESS sütunu 2-3 dəq sonra dolur
 ```
 
-### 2) Image-i push et
+## ECS → k8s: kod səviyyəsində qarşılıq
 
-```bash
-terraform output -raw docker_push_commands
-```
+Əvvəlki layihəni bura köçürərkən nə nəyə çevrildi:
 
-Əmrləri **`../test-backend` qovluğunda** işlət (Dockerfile oradadır):
+| ECS Fargate | Bu layihədə | Fayl |
+|---|---|---|
+| Task definition | Deployment `spec.template` | `02-backend.yaml` |
+| Service | Deployment | `02-backend.yaml` |
+| `desired_count` | `replicas` | `02-backend.yaml` |
+| `environment` bloku | ConfigMap + `envFrom` | `02-backend.yaml` |
+| `secrets` bloku | ExternalSecret → Secret → `secretKeyRef` | `01-`, `02-` |
+| ALB + target group | Ingress + Service | `04-ingress.yaml` |
+| `health_check_grace_period_seconds` | `startupProbe` | `02-backend.yaml` |
+| container `healthCheck` | `livenessProbe` | `02-backend.yaml` |
+| TG health check | `readinessProbe` | `02-backend.yaml` |
+| `aws_appautoscaling_policy` | HorizontalPodAutoscaler | `02-backend.yaml` |
+| ECS task role | Pod Identity + ServiceAccount | `external-secrets.tf` |
+| `deployment_circuit_breaker` | `kubectl rollout undo` / Argo Rollouts | — |
+| `enable_execute_command` | `kubectl exec` | — |
+| SG-lər arası zəncir | NetworkPolicy | `05-networkpolicy.yaml` |
+| (yoxdur) | PodDisruptionBudget | `02-backend.yaml` |
+| (yoxdur) | topologySpreadConstraints | `02-backend.yaml` |
 
-```bash
-cd ../test-backend
+Son iki sətir k8s-in ECS üzərində real üstünlüyüdür — node yenilənərkən nə qədər pod-un yıxıla biləcəyini və pod-ların AZ-lər arasında necə yayılacağını dəqiq idarə edirsən.
 
-aws ecr get-login-password --region eu-north-1 \
-  | docker login --username AWS --password-stdin <account>.dkr.ecr.eu-north-1.amazonaws.com
+## Spring Boot üçün kritik məqamlar
 
-docker build --platform linux/amd64 -t <account>.dkr.ecr.eu-north-1.amazonaws.com/test-backend:v1.0.0 .
-docker push <account>.dkr.ecr.eu-north-1.amazonaws.com/test-backend:v1.0.0
+**1. Üç probe, üç ayrı iş.** ECS-də bir health check var idi, burada üç var:
 
-cd ../deploy-eks
-```
+- `startupProbe` — "hələ açılır, öldürmə". **Bu olmasa liveness Spring-i açılmağa macal tapmadan öldürür və sonsuz restart dövrəsi yaranır.** Fargate-dəki `health_check_grace_period_seconds`-in analoqu.
+- `readinessProbe` — "trafik göndərə bilərsən?". `false` olanda pod Service endpoint-lərindən çıxarılır, amma restart olmur.
+- `livenessProbe` — "asılıb qalıb?". `false` olanda pod restart olur.
 
-`--platform` vacibdir — ARM maşında bu olmasa task `exec format error` ilə düşür.
-`image_tag` `terraform.tfvars`-dakı dəyərlə **eyni** olmalıdır (`v1.0.0`).
+Spring Boot-da `management.endpoint.health.probes.enabled: true` yazsan `/actuator/health/liveness` və `/readiness` ayrıca açılır. Readiness Flyway migration bitənə qədər `DOWN` qalır — məhz istədiyimiz davranışdır.
 
-### 3) Qalan hər şeyi qur
+**2. `requests` vs `limits`.** Scheduler `requests`-ə görə node seçir, `limits` aşılanda pod öldürülür. CPU limit-i **qoyma** — JVM-də GC thread-ləri throttle olunur və latency partlayır. Memory limit-i qoy.
 
-```bash
-terraform apply          # RDS ~10 dəqiqə çəkir
-```
+**3. `-XX:MaxRAMPercentage=75`.** ECS-də olduğu kimi. Bu olmasa JVM node yaddaşına görə heap hesablayır və `OOMKilled` olur.
 
-### 4) Yoxlama
+**4. `maxUnavailable: 0`.** Deploy zamanı əvvəl yeni pod ready olur, sonra köhnəsi silinir.
 
-**Base URL-i götür:**
+**5. HikariCP × replica ≤ RDS `max_connections`.** `db.t4g.micro`-da ~100. Pool 10 × HPA max 8 = 80. Sərhəddədir. Replika artırırsansa ya pool azalt, ya instance böyüt. **Bu k8s-də ECS-dən daha təhlükəlidir**, çünki HPA səni xəbərsiz 8 replikaya çıxarır.
 
-```bash
-terraform output app_url
-# http://test-backend-alb-2090795029.eu-north-1.elb.amazonaws.com
-```
+**6. Subnet tag-ları.** `vpc.tf`-də `kubernetes.io/role/elb` və `internal-elb`. Bunlar olmasa Ingress ALB yarada bilmir və `unable to discover subnets` xətası verir. EKS-də ən çox ilişilən yer budur.
 
-**Əvvəlcə infrastruktur sağdırmı — HTTP atmazdan qabaq bunu yoxla.**
-Task-lar qalxmayıbsa aşağıdakı `curl`-lar timeout verəcək və səbəbi görünməyəcək:
-
-```bash
-aws ecs describe-services --cluster test-backend-cluster \
-  --services test-backend-service --region eu-north-1 \
-  --query "services[0].{running:runningCount,desired:desiredCount,deploy:deployments[0].rolloutState}"
-```
-
-Gözlənilən: `running = desired = 2`, `rolloutState = COMPLETED`.
-
-**Endpoint-lər (PowerShell):**
-
-```powershell
-$url = terraform output -raw app_url
-
-curl.exe "$url/actuator/health"
-
-Invoke-RestMethod -Uri "$url/api/messages" -Method Post `
-  -ContentType "application/json" -Body '{"text":"hello from ecs"}'
-
-Invoke-RestMethod -Uri "$url/api/messages"
-```
-
-Eyni şey bash-da:
-
-```bash
-URL=$(terraform output -raw app_url)
-curl -s "$URL/actuator/health"
-curl -s -X POST "$URL/api/messages" -H "Content-Type: application/json" -d '{"text":"hello from ecs"}'
-curl -s "$URL/api/messages"
-```
-
-Gözlənilən cavablar:
-
-| Sorğu | Cavab |
-|---|---|
-| `GET /actuator/health` | `200` `{"status":"UP","groups":["liveness","readiness"]}` |
-| `POST /api/messages` | `201` `{"id":1,"text":"...","createdAt":"..."}` |
-| `GET /api/messages` | `200` — yazılan sətir qayıdır |
-| `GET /actuator/prometheus` | **`404` — bu düzgündür**, `alb.tf` bloklayır |
-
-`POST`-un qaytardığı `id` bütün zəncirin işlədiyinin sübutudur:
-internet → ALB → Fargate task → RDS Postgres, parol isə Secrets Manager-dən.
-
-**Loqlar:**
-
-```bash
-aws logs tail /ecs/test-backend --follow --region eu-north-1
-```
-
-### Sonrakı deploy-lar
-
-Service-də `lifecycle { ignore_changes = [task_definition] }` var — bu, CI/CD-nin
-qoyduğu image-i Terraform-un geri qaytarmaması üçündür. Nəticədə **yeni image push
-edib `terraform apply` etsən service yenilənməyəcək.** Rollout-u əl ilə başlat:
-
-```bash
-terraform output -raw redeploy_command
-```
-
-### Silmək
-
-```bash
-terraform destroy
-```
-
-`force_delete`, `skip_final_snapshot`, `recovery_window_in_days = 0` təyin olunduğu üçün
-destroy təmiz keçir.
-
-`free_tier_account = false` etmisənsə RDS-in `/aws/rds/instance/.../postgresql` log qrupu
-geridə qalır — onu əl ilə sil. Free tier rejimində o log export onsuz da sönülüdür.
-
-⚠️ **İş bitəndə mütləq destroy et.** ALB və RDS trafik olmasa da saatlıq pul yeyir
-(~$73/ay), `terraform destroy` isə yeganə dayandırma yoludur.
-
-## Postgres-i necə nəzərə aldıq — vacib məqamlar
-
-**1. Parol heç yerdə açıq deyil.**
-`random_password` → Secrets Manager → task definition-ın `secrets` bloku. Container-in içində normal environment variable kimi görünür, amma ECS konsolunda və Terraform kodunda görünmür. *Amma parol Terraform state-də açıq mətn kimi saxlanılır* — `.gitignore` `*.tfstate`-i bağlayır, real layihədə isə `versions.tf`-dəki şifrəli S3 backend-i aç.
-
-**2. JDBC URL-də parol yoxdur.**
-URL environment, user/password isə secrets kimi ayrı gedir. Belə olanda parol xüsusi simvol saxlaya bilir və URL encoding problemi çıxmır.
-
-**3. Baza internetdən əlçatan deyil.**
-`publicly_accessible = false`, private subnet, security group yalnız ECS SG-ni qəbul edir. Lokaldan qoşulmaq üçün bastion host və ya SSM port forwarding lazımdır.
-
-**4. Health check grace period = 120s.**
-Bu olmasa Spring Boot açılmağa macal tapmadan ALB onu `unhealthy` sayır, ECS task-ı öldürür və sonsuz restart dövrəsi yaranır. **Fargate-də Spring Boot deploy edənlərin ən çox ilişdiyi yer budur.**
-
-Eyni dövrənin ikinci mənbəyi container-in **öz** `healthCheck`-idir: o, `curl`-u container-in içində işlədir, `eclipse-temurin` və distroless image-lərdə isə curl yoxdur → `exit 127` → hər dəfə unhealthy. Ona görə `enable_container_healthcheck` default `false`-dur; ALB target group health check onsuz da bu işi görür. Image-də curl varsa (bax `Dockerfile.example`) `true` et.
-
-**4a. `/actuator/health` bazadan asılıdır.**
-Spring Boot bu endpoint-ə DataSource health indicator-unu da qatır. RDS bir anlıq əlçatmaz olsa (məsələn bazar günü maintenance window-da) **bütün** task-lar eyni anda unhealthy olur və ECS hamısını öldürür — kiçik problem tam kəsintiyə çevrilir. Daha davamlısı:
-
-```hcl
-health_check_path = "/actuator/health/liveness"
-```
-
-Bunun üçün app tərəfdə `management.endpoint.health.probes.enabled: true` lazımdır — `application-prod.yml.example`-də açıqdır.
-
-**5. JVM container limitini görməlidir.**
-`-XX:MaxRAMPercentage=75`. Bu olmasa JVM heap-i host yaddaşına görə hesablayır, limiti aşır və task `OOMKilled` olur — loqda heç bir izahat qalmadan.
-
-**6. HikariCP pool ölçüsü × task sayı ≤ RDS max_connections.**
-`db.t4g.micro`-da `max_connections` ≈ 100. Pool 10, autoscaling max 8 task → 80. Sərhəddədir. Task sayını artırırsansa ya pool-u azalt, ya instance-ı böyüt.
-
-**7. Schema — `test-backend`-də Flyway YOXDUR.**
-Tətbiq `ddl-auto: update` ilə işləyir, yəni `message` cədvəlini Hibernate özü qurur. RDS boş yaradıldığı üçün bu **məcburidir**: `validate` qoysan tətbiq `missing table [message]` ilə heç açılmayacaq.
-
-2 task eyni anda qalxanda ikisi də `CREATE TABLE` çağırır — biri udur, ikincisi `relation already exists` xəbərdarlığı yazıb davam edir, startup düşmür. Yəni işləyir, amma bu bir test servisinin həlli.
-
-Real prod üçün doğru yol: `build.gradle`-a `implementation 'org.flywaydb:flyway-database-postgresql'` əlavə et, `V1__create_message.sql` yaz, sonra `ddl-auto: validate` et. Flyway advisory lock tutduğu üçün paralel task-larda migration yalnız bir dəfə işləyir.
-
-**8. Graceful shutdown.**
-`server.shutdown: graceful` + `stopTimeout: 30` + `deregistration_delay: 30`. Deploy zamanı yarımçıq qalan sorğu olmasın. Dockerfile-da `ENTRYPOINT` **exec formasında** olmalıdır (`["java","-jar",...]`) — shell forması olsa JVM PID 1 olmur və SIGTERM-i almır.
-
-**9. Actuator internetə açıq qalmasın.**
-`MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE` `metrics` və `prometheus`-u da açır, ALB isə bütün path-ləri ötürür — yəni `/actuator/prometheus` 0.0.0.0/0-dan görünərdi. `alb.tf`-də iki listener rule var: `/actuator/health` keçir (priority 10), qalan `/actuator/*` 404 alır (priority 20). Target group-un öz health check-i listener rule-lardan keçmir, ona görə bu heç nəyi pozmur.
-
-**10. Docker image arxitekturası.**
-`cpu_architecture` (`X86_64` default) ilə `docker build --platform` üst-üstə düşməlidir. `ARM64` seçsən Fargate ~20% ucuzdur, amma image də ARM olmalıdır.
-
-## Xərc (təxmini, eu-north-1)
+## Xərc (təxmini, eu-central-1)
 
 | Resurs | ~$/ay |
 |---|---|
+| EKS control plane | 73 |
+| Auto Mode compute (2× t3.medium ekvivalenti + Auto Mode əlavəsi) | ~70 |
 | ALB | 18 |
-| Fargate 2× (0.5 vCPU / 1 GB) | 36 |
-| RDS db.t4g.micro + 20 GB gp3 | 17 |
-| NAT Gateway (`enable_nat_gateway = true`) | 35 |
-| Secrets Manager, ECR, Logs | ~2 |
-| **Cəmi (NAT-sız)** | **~73** |
+| NAT Gateway (single) | 35 |
+| RDS db.t4g.micro | 17 |
+| **Cəmi** | **~215** |
 
-Öyrənmə üçün: `enable_nat_gateway = false`, `desired_count = 1`, `db_multi_az = false`. İşin bitəndə `terraform destroy` — vacibdir.
-
-## k8s ilə müqayisə (bu koda baxaraq)
-
-| Bu koddakı | Kubernetes qarşılığı |
-|---|---|
-| `aws_ecs_task_definition` | Pod template + container spec |
-| `aws_ecs_service` | Deployment |
-| `desired_count` | `replicas` |
-| `aws_appautoscaling_policy` | HorizontalPodAutoscaler |
-| `secrets` bloku | Secret + `envFrom`/`secretKeyRef` |
-| `environment` bloku | ConfigMap |
-| `aws_lb_target_group` + listener | Ingress + Service |
-| `health_check_grace_period_seconds` | `startupProbe` / `initialDelaySeconds` |
-| container `healthCheck` (opsional) | `livenessProbe` |
-| ALB target group health check | `readinessProbe` |
-| `deployment_circuit_breaker` | Argo Rollouts / manual `kubectl rollout undo` |
-| `aws_iam_role.ecs_task` | ServiceAccount + IRSA |
-| `enable_execute_command` | `kubectl exec` |
-
-Bunu bir dəfə işə salandan sonra eyni tətbiqi EKS-ə köçürsən, hər sətrin nəyə cavab verdiyini artıq biləcəksən.
+ECS versiyası ~$73 idi. **Fərqin böyük hissəsi control plane-in $73-üdür — o, sən heç nə deploy etməsən də ödənilir.** İki servis üçün k8s-in iqtisadi cəhətdən niyə ağır olduğunu ilk cavabda deyəndə nəzərdə tutduğum məhz budur. Öyrənmə üçün tamamilə normaldır, sadəcə **işin bitəndə `terraform destroy` et** — unudulmuş EKS cluster-i bahalı dərsdir.
 
 ## Növbəti addımlar
 
-1. **HTTPS** — Route53 + ACM sertifikat, `alb.tf`-də şərh açılmış hissə hazırdır
-2. **CI/CD** — GitHub Actions: build → ECR push → `aws ecs update-service --force-new-deployment`
-3. **Frontend** — statik React üçün ayrıca S3 + CloudFront (Fargate-ə salma)
-4. **Müşahidə** — `/actuator/prometheus` → Amazon Managed Prometheus və ya CloudWatch metric filter. Scrape kənardan gələcəksə `alb.tf`-dəki `actuator_block` qaydasına `source_ip` şərti əlavə et, qaydanı tamam silmə
-5. **VPC Endpoints** — NAT əvəzinə ECR/Secrets/Logs üçün interface endpoint-lər (çox trafikdə daha ucuz)
+1. **Argo CD** — manifestləri git-dən avtomatik sinxronlaşdır (GitOps mərhələsi)
+2. **HTTPS** — ACM sertifikat + `04-ingress.yaml`-dakı şərh açılmış annotation-lar
+3. **Müşahidə** — Prometheus + Grafana, `/actuator/prometheus` scrape et
+4. **Frontend-i CloudFront-a köçür** — pod-ları sil, xərc və gecikmə azalsın
+5. **Backup/DR** — Velero ilə cluster state, RDS snapshot siyasəti
