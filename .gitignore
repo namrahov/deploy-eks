@@ -1,5 +1,5 @@
 # ---------- Terraform ----------
-# State faylinda DB parolu ACIQ METN kimi durur - hec vaxt commit etme.
+# The state file holds the DB password in PLAINTEXT - never commit it.
 *.tfstate
 *.tfstate.*
 *.tfstate.backup
@@ -8,17 +8,17 @@
 crash.log
 crash.*.log
 
-# Real deyerler (parol, hesab ID, domain...). Yalniz .example commit olunur.
+# Real values (password, account ID, domain...). Only .example gets committed.
 terraform.tfvars
 *.auto.tfvars
 !terraform.tfvars.example
 
-# Plan faylinda da hessas deyerler olur
+# Plan files contain sensitive values too
 *.tfplan
 tfplan
 
-# QEYD: .terraform.lock.hcl BURADA SADALANMIR - cunki o COMMIT OLUNMALIDIR.
-# Provider versiyalarini sabitleyir; komandada herkes eyni versiyani alir.
+# NOTE: .terraform.lock.hcl is NOT LISTED HERE - because it MUST BE COMMITTED.
+# It pins the provider versions; everyone on the team gets the same versions.
 
 # ---------- Local ----------
 .env

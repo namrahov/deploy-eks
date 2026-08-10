@@ -3,10 +3,11 @@ kind: Namespace
 metadata:
   name: app
 ---
-# DIQQET: bu adi deyisdirsen 3 yerde birden deyismelisen, yoxsa pod acilmir:
+# WARNING: if you change this name you must change it in 3 places at once,
+# otherwise the pod won't start:
 #   - external-secrets.tf -> aws_eks_pod_identity_association.backend.service_account
 #   - test-backend/02-backend.yaml -> spec.template.spec.serviceAccountName
-#   - bu fayl
+#   - this file
 apiVersion: v1
 kind: ServiceAccount
 metadata:

@@ -15,7 +15,7 @@ output "ecr_login" {
 }
 
 output "db_secret_name" {
-  description = "ExternalSecret bu adi istifade edir"
+  description = "The ExternalSecret uses this name"
   value       = aws_secretsmanager_secret.db.name
 }
 

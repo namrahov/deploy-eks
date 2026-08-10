@@ -2,8 +2,8 @@ project            = "my-springboot-eks"
 region             = "eu-north-1"
 kubernetes_version = "1.34"
 
-# true  = EKS Auto Mode (tovsiye olunur)
-# false = klassik managed node group (Kubernetes daxilini oyrenmek ucun)
+# true  = EKS Auto Mode (recommended)
+# false = classic managed node group (to learn the Kubernetes internals)
 use_auto_mode = true
 
 db_name           = "appdb"
@@ -11,12 +11,12 @@ db_username       = "appuser"
 db_instance_class = "db.t4g.micro"
 db_multi_az       = false
 
-# AWS "Free Tier" planindaki hesab? Console -> Billing -> Free tier / Account plan.
-# true olanda avtomatik backup, storage autoscaling, CloudWatch log export ve
-# Performance Insights sondurulur - yoxsa apply FreeTierRestrictionError verir.
+# Is the account on the AWS "Free Tier" plan? Console -> Billing -> Free tier / Account plan.
+# When true, automated backups, storage autoscaling, CloudWatch log export and
+# Performance Insights are disabled - otherwise apply fails with FreeTierRestrictionError.
 free_tier_account = true
 
-# db.t4g.micro/small-da Performance Insights DESTEKLENMIR - true etsen
-# apply "InvalidParameterCombination" ile dusur. Instance boyudende ac.
-# QEYD: free_tier_account = true olanda bu deyer nezere alinmir (hemise sonulu).
+# Performance Insights is NOT SUPPORTED on db.t4g.micro/small - if you set true,
+# apply fails with "InvalidParameterCombination". Enable it once you size up.
+# NOTE: when free_tier_account = true this value is ignored (always disabled).
 db_performance_insights = false

@@ -1,10 +1,10 @@
 # ============================================================
-# RDS parolunu Secrets Manager-den k8s Secret-e sinxronlasdirir.
-# Beleliklede parol nə manifest-de, ne git-de, ne de Terraform
-# output-unda acig gorunmur.
+# Syncs the RDS password from Secrets Manager into a k8s Secret.
+# This way the password appears in plaintext neither in the manifests,
+# nor in git, nor in the Terraform output.
 #
-# ECS-de bunu task definition "secrets" bloku edirdi.
-# k8s-de bu isi External Secrets Operator gorur.
+# On ECS this was done by the task definition "secrets" block.
+# On k8s the External Secrets Operator does the job.
 # ============================================================
 
 resource "helm_release" "external_secrets" {
@@ -23,9 +23,9 @@ resource "helm_release" "external_secrets" {
   depends_on = [module.eks]
 }
 
-# ---------- Pod Identity: IRSA-nin varisi ----------
-# IRSA-dan ferqli olaraq OIDC provider, trust policy JSON-u ve
-# annotation lazim deyil. Sadece rol + association.
+# ---------- Pod Identity: the successor to IRSA ----------
+# Unlike IRSA, no OIDC provider, trust policy JSON or annotation
+# is needed. Just a role + an association.
 
 resource "aws_iam_role" "external_secrets" {
   name = "${var.project}-external-secrets"
@@ -61,9 +61,9 @@ resource "aws_eks_pod_identity_association" "external_secrets" {
   role_arn        = aws_iam_role.external_secrets.arn
 }
 
-# ---------- Tetbiqin oz IAM rolu ----------
-# Spring Boot koddan S3/SQS/SNS-e murachiet edecekse icazeler buraya.
-# ECS-deki "task role"-un tam analoqu.
+# ---------- The application's own IAM role ----------
+# If the Spring Boot code calls S3/SQS/SNS, the permissions go here.
+# The exact analogue of the ECS "task role".
 
 resource "aws_iam_role" "backend" {
   name = "${var.project}-backend"

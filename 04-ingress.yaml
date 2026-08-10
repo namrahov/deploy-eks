@@ -1,9 +1,9 @@
 # =========================================================================
-# EKS AUTO MODE ucun. Auto Mode-da ALB controller quraşdırılmış gəlir.
-# Klassik EKS istifade edirsense:
-#   - AWS Load Balancer Controller-i Helm ile qur
-#   - controller: ingress.k8s.aws/alb  (asagidaki eks.amazonaws.com/alb evezine)
-#   - IngressClassParams-a ehtiyac yoxdur, annotation-lar kifayetdir
+# FOR EKS AUTO MODE. In Auto Mode the ALB controller comes pre-installed.
+# If you use classic EKS:
+#   - install the AWS Load Balancer Controller with Helm
+#   - controller: ingress.k8s.aws/alb  (instead of eks.amazonaws.com/alb below)
+#   - IngressClassParams is not needed, the annotations are enough
 # =========================================================================
 apiVersion: eks.amazonaws.com/v1
 kind: IngressClassParams
@@ -32,20 +32,20 @@ metadata:
   namespace: app
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
-    # "ip" = trafik birbasa pod-a gedir (NodePort hop-u yoxdur)
+    # "ip" = traffic goes straight to the pod (no NodePort hop)
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
     alb.ingress.kubernetes.io/success-codes: "200"
-    # Butun Ingress-ler eyni ALB-ni paylassin (pula qenaet)
+    # Let all Ingresses share the same ALB (saves money)
     alb.ingress.kubernetes.io/group.name: app
 
-    # QEYD: healthcheck-path BURADA teyin olunmur, cunki backend ve frontend
-    # ucun ferqlidir. Hemin annotation her Service-in ustundedir
+    # NOTE: healthcheck-path is NOT set HERE, because it differs for the
+    # backend and the frontend. That annotation sits on each Service
     # (test-backend/02-backend.yaml, test-frontend/03-frontend.yaml).
-    # Burada teyin etsen HER IKI target group ucun eyni yol islenir ve
-    # birinin health check-i mutleq dusur.
+    # If you set it here, the same path is used for BOTH target groups and
+    # one of them is guaranteed to fail its health check.
 
-    # ---- HTTPS (ACM sertifikat oldugda serhi ac) ----
+    # ---- HTTPS (uncomment once you have an ACM certificate) ----
     # alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
     # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:...
     # alb.ingress.kubernetes.io/ssl-redirect: "443"
@@ -54,7 +54,7 @@ spec:
   rules:
     - http:
         paths:
-          # SIRA VACIBDIR: spesifik yol umumi yoldan evvel gelmelidir
+          # ORDER MATTERS: the specific path must come before the general one
           - path: /api
             pathType: Prefix
             backend:
@@ -62,12 +62,12 @@ spec:
                 name: backend
                 port:
                   number: 80
-          # /actuator BILEREKDEN internete acilmir: exposure siyahisinda
-          # metrics ve prometheus var - onlar endpoint adlarini, JVM/DB
-          # metrikalarini ve trafik hecmini kenar adama verir.
-          # ALB health check-i target group seviyyesindedir, Ingress
-          # qaydasindan asili deyil - ona gore bu yolu silmek probe-lari sindirmir.
-          # Prometheus scrape cluster daxilinden Service uzerinden edilir.
+          # /actuator is DELIBERATELY not exposed to the internet: the exposure
+          # list contains metrics and prometheus - those hand an outsider the
+          # endpoint names, JVM/DB metrics and traffic volume.
+          # The ALB health check is at the target group level, independent of the
+          # Ingress rules - so removing this path does not break the probes.
+          # Prometheus scraping is done from inside the cluster via the Service.
           - path: /
             pathType: Prefix
             backend:

@@ -1,58 +1,58 @@
 # Frontend + Spring Boot + RDS Postgres → EKS
 
-## Əvvəlcə: 4 yerdə fərqli təklifim var
+## First: 4 places where I suggest something different
 
-### 1. Frontend-i EKS-ə salma (statikdirsə)
+### 1. Don't put the frontend on EKS (if it's static)
 
-Bu ən vacib məsləhətdir. React/Vue build çıxışı sadəcə fayldır. Onu pod-da nginx ilə paylamaq üçün ödəyəcəyin qiymət:
+This is the most important advice. A React/Vue build output is just files. The price you pay to serve them from an nginx pod:
 
-- 2 pod × yaddaş/CPU — daimi
+- 2 pods × memory/CPU — permanently
 - ALB target group, health check, deploy pipeline
-- nginx image-inin CVE yamaqları — sənin məsuliyyətin
-- CDN yoxdur → Bakıdan da, Berlindən də eyni tək region-a gedilir
+- CVE patching of the nginx image — your responsibility
+- No CDN → traffic from Baku and from Berlin both hit the same single region
 
-S3 + CloudFront-da: ~$1/ay, global CDN, yamaq yoxdur, `aws s3 sync` ilə deploy.
+On S3 + CloudFront: ~$1/month, global CDN, no patching, deploy with `aws s3 sync`.
 
-`../test-frontend/03-frontend.yaml` yenə də daxildədir — **öyrənmək üçün**. Kubernetes-də Deployment/Service/ConfigMap/volume mount necə işləyir, bunu görmək dəyərlidir. Amma prod-da CloudFront-a keç.
+`../test-frontend/03-frontend.yaml` is still included — **for learning**. Seeing how Deployment/Service/ConfigMap/volume mount work in Kubernetes is worth it. But in prod, move to CloudFront.
 
-**İstisna:** Next.js/Nuxt kimi SSR-dırsa, o artıq server prosesidir — həqiqətən EKS-də olmalıdır.
+**Exception:** if it's SSR like Next.js/Nuxt, that's already a server process — it genuinely belongs on EKS.
 
-### 2. Managed node group əvəzinə EKS Auto Mode
+### 2. EKS Auto Mode instead of a managed node group
 
-<cite index="8-1">AWS 2024-cü ilin dekabrında EKS Auto Mode-u elan etdi — compute, storage və şəbəkə idarəçiliyini tam avtomatlaşdıran rejim.</cite> <cite index="6-1">Praktikada bu o deməkdir ki, Karpenter, VPC CNI, EBS CSI, CoreDNS və kube-proxy AWS tərəfindən idarə olunur; nə node group konfiqurasiya edirsən, nə də addon quraşdırırsan.</cite>
+<cite index="8-1">In December 2024 AWS announced EKS Auto Mode — a mode that fully automates compute, storage and networking management.</cite> <cite index="6-1">In practice this means Karpenter, VPC CNI, EBS CSI, CoreDNS and kube-proxy are managed by AWS; you neither configure node groups nor install addons.</cite>
 
-<cite index="2-1">Node həyat dövrünü Karpenter idarə edir: gözləyən pod-lar üçün ölçüsü uyğun instance yaradır, az istifadə olunan node-ları birləşdirib xərci azaldır.</cite>
+<cite index="2-1">Karpenter manages the node lifecycle: it launches right-sized instances for pending pods and consolidates underutilized nodes to cut cost.</cite>
 
-Sənin üçün nə dəyişir: AMI yeniləmələri, node drain, cluster-autoscaler tənzimləmə, addon versiya uyğunluğu — bunların heç biri sənin işin deyil. `var.use_auto_mode = false` etsən klassik node group qurulur (daxili mexanizmi görmək üçün faydalıdır).
+What changes for you: AMI updates, node drain, cluster-autoscaler tuning, addon version compatibility — none of that is your job anymore. Set `var.use_auto_mode = false` and a classic node group is created instead (useful for seeing the internal mechanics).
 
-**Nə vaxt Auto Mode uyğun gəlmir:** node-a özəl AMI, DaemonSet-lə aşağı səviyyəli agent, spesifik kernel parametrləri lazımdırsa.
+**When Auto Mode is not a fit:** if you need a custom AMI on the node, a low-level agent as a DaemonSet, or specific kernel parameters.
 
-### 3. IRSA əvəzinə EKS Pod Identity
+### 3. EKS Pod Identity instead of IRSA
 
-IRSA-da OIDC provider, JSON trust policy və ServiceAccount annotation-u lazım idi. Pod Identity-də sadəcə rol yaradırsan və association ilə namespace/ServiceAccount cütünə bağlayırsan. Kodda müqayisə üçün hər ikisinin fərqi `external-secrets.tf`-də şərh edilib.
+IRSA required an OIDC provider, a JSON trust policy and a ServiceAccount annotation. With Pod Identity you just create a role and bind it to a namespace/ServiceAccount pair via an association. The difference between the two is commented in `external-secrets.tf` for comparison.
 
-### 4. Manifestləri Terraform-la idarə etmə
+### 4. Don't manage manifests with Terraform
 
-Terraform **infrastruktur** üçündür: VPC, EKS, RDS, IAM. Tətbiq manifestləri üçün `kubernetes_manifest` resursu istifadə etmə — Terraform CRD-ləri plan mərhələsində bilmir, `terraform plan` cluster-ə qoşulmağa məcbur olur, və deploy sürəti dəhşətli olur.
+Terraform is for **infrastructure**: VPC, EKS, RDS, IAM. Don't use the `kubernetes_manifest` resource for application manifests — Terraform can't know CRDs at plan time, `terraform plan` is forced to connect to the cluster, and deploy speed becomes terrible.
 
-Düzgün ayrım:
+The right split:
 
 ```
-Terraform  →  VPC, EKS, RDS, IAM, ECR, cluster-səviyyə Helm chart-lar
+Terraform  →  VPC, EKS, RDS, IAM, ECR, cluster-level Helm charts
 kubectl/Helm/Argo CD  →  Deployment, Service, Ingress, ConfigMap
 ```
 
-Növbəti addım olaraq **Argo CD** (GitOps) — yol xəritəndə onsuz da var.
+As a next step: **Argo CD** (GitOps) — it's already on your roadmap anyway.
 
 ---
 
-## Arxitektura
+## Architecture
 
 ```
 Internet
    │
    ▼
- ALB  (Ingress ilə yaradılır, target-type: ip)
+ ALB  (created by the Ingress, target-type: ip)
    ├── /api/*  ──► Service backend  ──► Pod (Spring Boot)
    └── /*      ──► Service frontend ──► Pod (nginx)
                                      │
@@ -60,33 +60,33 @@ Internet
                         ▼
               RDS Postgres (database subnets, private)
                         ▲
-                        │ parol
+                        │ password
         Secrets Manager ─┴─► External Secrets Operator ──► k8s Secret
 ```
 
-## Fayllar harada yerləşir
+## Where the files live
 
-Manifestlər **üç repo arasında bölünüb** — hər tətbiqin manifesti öz repo-sundadır:
+The manifests are **split across three repos** — each application's manifest lives in its own repo:
 
-| Fayl | Repo |
+| File | Repo |
 |---|---|
-| `*.tf`, `00-namespace.yaml`, `01-external-secret.yaml`, `04-ingress.yaml`, `05-networkpolicy.yaml` | `deploy-eks` (bu repo, kök qovluq) |
+| `*.tf`, `00-namespace.yaml`, `01-external-secret.yaml`, `04-ingress.yaml`, `05-networkpolicy.yaml` | `deploy-eks` (this repo, root directory) |
 | `02-backend.yaml` | `../test-backend` |
 | `03-frontend.yaml` | `../test-frontend` |
 
-Ayrı `terraform/` və `k8s/` qovluğu **yoxdur** — Terraform faylları kökdədir.
+There are **no** separate `terraform/` and `k8s/` directories — the Terraform files are at the root.
 
-## Deploy sırası
+## Deploy order
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars   # redaktə et
+cp terraform.tfvars.example terraform.tfvars   # edit it
 terraform init
 
-# 1) Əvvəl ECR (image-siz pod işə düşməz)
+# 1) ECR first (a pod can't start without an image)
 terraform apply -target=aws_ecr_repository.app
 
-# 2) Image-ləri push et
-terraform output -raw ecr_login          # çıxan əmri işlət (docker login)
+# 2) Push the images
+terraform output -raw ecr_login          # run the command it prints (docker login)
 
 BE=$(terraform output -raw ecr_backend_url)
 FE=$(terraform output -raw ecr_frontend_url)
@@ -99,34 +99,34 @@ cd ../test-frontend
 docker build --platform linux/amd64 -t $FE:v1.0.0 . && docker push $FE:v1.0.0
 sed -i "s|newName: .*|newName: $FE|" kustomization.yaml
 
-# 3) Qalanını qur (EKS ~15 dəq, RDS ~10 dəq — paralel gedir)
+# 3) Build the rest (EKS ~15 min, RDS ~10 min — they run in parallel)
 cd ../deploy-eks
 terraform apply
 
-# 4) kubectl konfiqurasiyası
+# 4) Configure kubectl
 $(terraform output -raw configure_kubectl)      # PowerShell: Invoke-Expression (terraform output -raw configure_kubectl)
-kubectl get nodes        # Auto Mode-da pod deploy edənə qədər node görünməyə bilər
+kubectl get nodes        # in Auto Mode no node may appear until you deploy a pod
 
-# 5) Manifestləri tətbiq et — SIRA VACIBDIR
-#    01-external-secret.yaml → remoteRef.key `terraform output -raw db_secret_name` ilə eyni olmalıdır
+# 5) Apply the manifests — ORDER MATTERS
+#    01-external-secret.yaml → remoteRef.key must match `terraform output -raw db_secret_name`
 kubectl apply -f 00-namespace.yaml
 kubectl apply -f 01-external-secret.yaml
-kubectl apply -k ../test-backend     # -k, -f DEYIL: image adını kustomize qoyur
+kubectl apply -k ../test-backend     # -k, NOT -f: kustomize sets the image name
 kubectl apply -k ../test-frontend
 kubectl apply -f 04-ingress.yaml
 kubectl apply -f 05-networkpolicy.yaml
 
-# 6) Yoxla
-kubectl get externalsecret -n app        # STATUS: SecretSynced olmalıdır
+# 6) Verify
+kubectl get externalsecret -n app        # STATUS should be SecretSynced
 kubectl get pods -n app -w
-kubectl get hpa -n app                   # TARGETS <unknown> deyil, faiz göstərməlidir
-kubectl get ingress -n app               # ADDRESS sütunu 2-3 dəq sonra dolur
+kubectl get hpa -n app                   # TARGETS must show a percentage, not <unknown>
+kubectl get ingress -n app               # the ADDRESS column fills in after 2-3 min
 ```
 
-`00-namespace.yaml` mütləq birinci gedir: ServiceAccount `backend` olmasa pod
-`error looking up service account app/backend` ilə heç işə düşmür.
+`00-namespace.yaml` must go first: without the `backend` ServiceAccount the pod
+never starts, failing with `error looking up service account app/backend`.
 
-PowerShell-də `sed` yoxdur — 2-ci addımdakı iki `sed` sətrinin qarşılığı:
+PowerShell has no `sed` — the equivalent of the two `sed` lines in step 2:
 
 ```powershell
 $BE = terraform output -raw ecr_backend_url
@@ -141,33 +141,32 @@ docker build --platform linux/amd64 -t "${FE}:v1.0.0" . ; docker push "${FE}:v1.
 (Get-Content kustomization.yaml) -replace 'newName: .*', "newName: $FE" | Set-Content kustomization.yaml -Encoding utf8
 ```
 
-### Image adı niyə `kustomization.yaml`-dadır
+### Why the image name lives in `kustomization.yaml`
 
-`02-backend.yaml`-da əvvəl `image: <ECR_BACKEND_URL>:v1.0.0` yazılırdı. Bu, **etibarlı
-image adı deyil** (`<` və `>` icazəli simvol deyil), amma Kubernetes image sətrini
-apply anında yoxlamır — `kubectl apply` səssizcə uğurla bitir, pod isə sonra
-`InvalidImageName` vəziyyətində ilişib qalır. Yəni əvəz etməyi unutsan, xətanı
-`kubectl apply`-dan deyil, `kubectl describe pod`-dan öyrənirsən.
+`02-backend.yaml` used to contain `image: <ECR_BACKEND_URL>:v1.0.0`. That is **not a valid
+image name** (`<` and `>` are not allowed characters), but Kubernetes does not validate the
+image string at apply time — `kubectl apply` silently succeeds, and the pod then gets stuck
+in `InvalidImageName`. So if you forget to substitute it, you learn about the error from
+`kubectl describe pod`, not from `kubectl apply`.
 
-İndi manifestin özü etibarlı sənəddir, hesaba bağlı yeganə dəyər isə
-`kustomization.yaml`-dakı `newName`-dir. Bir də: `kustomize` Argo CD-nin
-(§"Növbəti addımlar") təbii giriş formatıdır, ona görə bu addım GitOps-a keçidi
-ucuzlaşdırır.
+Now the manifest itself is a valid document, and the only account-specific value is
+`newName` in `kustomization.yaml`. On top of that: `kustomize` is Argo CD's
+(§"Next steps") native input format, so this step makes the move to GitOps cheaper.
 
-**Vacib:** bu iki manifest artıq `-k` ilə tətbiq olunur. `kubectl apply -f 02-backend.yaml`
-işlədsən image əvəz olunmur və pod `ErrImagePull` alır.
+**Important:** these two manifests are now applied with `-k`. If you run
+`kubectl apply -f 02-backend.yaml`, the image is not substituted and the pod gets `ErrImagePull`.
 
-## ECS → k8s: kod səviyyəsində qarşılıq
+## ECS → k8s: the mapping at the code level
 
-Əvvəlki layihəni bura köçürərkən nə nəyə çevrildi:
+What turned into what while porting the previous project over here:
 
-| ECS Fargate | Bu layihədə | Fayl |
+| ECS Fargate | In this project | File |
 |---|---|---|
 | Task definition | Deployment `spec.template` | `02-backend.yaml` |
 | Service | Deployment | `02-backend.yaml` |
 | `desired_count` | `replicas` | `02-backend.yaml` |
-| `environment` bloku | ConfigMap + `envFrom` | `02-backend.yaml` |
-| `secrets` bloku | ExternalSecret → Secret → `secretKeyRef` | `01-`, `02-` |
+| `environment` block | ConfigMap + `envFrom` | `02-backend.yaml` |
+| `secrets` block | ExternalSecret → Secret → `secretKeyRef` | `01-`, `02-` |
 | ALB + target group | Ingress + Service | `04-ingress.yaml` |
 | `health_check_grace_period_seconds` | `startupProbe` | `02-backend.yaml` |
 | container `healthCheck` | `livenessProbe` | `02-backend.yaml` |
@@ -176,68 +175,66 @@ işlədsən image əvəz olunmur və pod `ErrImagePull` alır.
 | ECS task role | Pod Identity + ServiceAccount | `external-secrets.tf` + `00-namespace.yaml` |
 | `deployment_circuit_breaker` | `kubectl rollout undo` / Argo Rollouts | — |
 | `enable_execute_command` | `kubectl exec` | — |
-| SG-lər arası zəncir | NetworkPolicy | `05-networkpolicy.yaml` |
-| (yoxdur) | PodDisruptionBudget | `02-backend.yaml` |
-| (yoxdur) | topologySpreadConstraints | `02-backend.yaml` |
+| Chain of SGs | NetworkPolicy | `05-networkpolicy.yaml` |
+| (none) | PodDisruptionBudget | `02-backend.yaml` |
+| (none) | topologySpreadConstraints | `02-backend.yaml` |
 
-Son iki sətir k8s-in ECS üzərində real üstünlüyüdür — node yenilənərkən nə qədər pod-un yıxıla biləcəyini və pod-ların AZ-lər arasında necə yayılacağını dəqiq idarə edirsən.
+The last two rows are k8s's real advantage over ECS — you control precisely how many pods may go down during a node upgrade and how pods spread across AZs.
 
-## Spring Boot üçün kritik məqamlar
+## Critical points for Spring Boot
 
-**1. Üç probe, üç ayrı iş.** ECS-də bir health check var idi, burada üç var:
+**1. Three probes, three separate jobs.** On ECS there was one health check; here there are three:
 
-- `startupProbe` — "hələ açılır, öldürmə". **Bu olmasa liveness Spring-i açılmağa macal tapmadan öldürür və sonsuz restart dövrəsi yaranır.** Fargate-dəki `health_check_grace_period_seconds`-in analoqu.
-- `readinessProbe` — "trafik göndərə bilərsən?". `false` olanda pod Service endpoint-lərindən çıxarılır, amma restart olmur.
-- `livenessProbe` — "asılıb qalıb?". `false` olanda pod restart olur.
+- `startupProbe` — "still booting, don't kill me". **Without it, liveness kills Spring before it gets a chance to start and you end up in an endless restart loop.** The equivalent of Fargate's `health_check_grace_period_seconds`.
+- `readinessProbe` — "can you take traffic?". When `false`, the pod is removed from the Service endpoints but is not restarted.
+- `livenessProbe` — "are you hung?". When `false`, the pod is restarted.
 
-Spring Boot-da `management.endpoint.health.probes.enabled: true` yazsan `/actuator/health/liveness` və `/readiness` ayrıca açılır. Readiness Flyway migration bitənə qədər `DOWN` qalır — məhz istədiyimiz davranışdır.
+In Spring Boot, setting `management.endpoint.health.probes.enabled: true` exposes `/actuator/health/liveness` and `/readiness` separately. Readiness stays `DOWN` until Flyway migration finishes — exactly the behavior we want.
 
-**2. `requests` vs `limits`.** Scheduler `requests`-ə görə node seçir, `limits` aşılanda pod öldürülür. CPU limit-i **qoyma** — JVM-də GC thread-ləri throttle olunur və latency partlayır. Memory limit-i qoy.
+**2. `requests` vs `limits`.** The scheduler picks a node based on `requests`; the pod is killed when `limits` are exceeded. Do **not** set a CPU limit — the JVM's GC threads get throttled and latency explodes. Do set a memory limit.
 
-**3. `-XX:MaxRAMPercentage=75`.** ECS-də olduğu kimi. Bu olmasa JVM node yaddaşına görə heap hesablayır və `OOMKilled` olur.
+**3. `-XX:MaxRAMPercentage=75`.** Same as on ECS. Without it the JVM sizes the heap from the node's memory and you get `OOMKilled`.
 
-**4. `maxUnavailable: 0`.** Deploy zamanı əvvəl yeni pod ready olur, sonra köhnəsi silinir.
+**4. `maxUnavailable: 0`.** During a deploy, the new pod becomes ready first and only then is the old one removed.
 
-**5. HikariCP × replica ≤ RDS `max_connections`.** `db.t4g.micro`-da ~100. Pool 10 × HPA max 8 = 80. Sərhəddədir. Replika artırırsansa ya pool azalt, ya instance böyüt. **Bu k8s-də ECS-dən daha təhlükəlidir**, çünki HPA səni xəbərsiz 8 replikaya çıxarır.
+**5. HikariCP × replicas ≤ RDS `max_connections`.** On `db.t4g.micro` that's ~100. Pool 10 × HPA max 8 = 80. That's right at the edge. If you raise replicas, either shrink the pool or grow the instance. **This is more dangerous on k8s than on ECS**, because the HPA scales you to 8 replicas without telling you.
 
-**6. Subnet tag-ları.** `vpc.tf`-də `kubernetes.io/role/elb` və `internal-elb`. Bunlar olmasa Ingress ALB yarada bilmir və `unable to discover subnets` xətası verir. EKS-də ən çox ilişilən yer budur.
+**6. Subnet tags.** `kubernetes.io/role/elb` and `internal-elb` in `vpc.tf`. Without them the Ingress can't create an ALB and fails with `unable to discover subnets`. This is the single most common place people get stuck on EKS.
 
-**7. `/actuator` internetə açılmır.** Ingress-də yalnız `/api` və `/` qaydası var.
-`management...exposure.include` siyahısında `metrics` və `prometheus` var — onları
-ALB-dən açsan endpoint adlarını, JVM/DB metrikalarını və trafik həcmini kənar adama
-vermiş olursan. ALB health check-i **target group səviyyəsindədir**, Ingress
-qaydasından asılı deyil, ona görə bu yolun bağlı olması probe-ları sındırmır.
-Prometheus scrape-i cluster daxilindən `Service backend:80/actuator/prometheus`
-üzərindən edilir.
+**7. `/actuator` is not exposed to the internet.** The Ingress only has `/api` and `/` rules.
+The `management...exposure.include` list contains `metrics` and `prometheus` — exposing those
+through the ALB would hand an outsider your endpoint names, JVM/DB metrics and traffic volume.
+The ALB health check lives **at the target group level**, independent of the Ingress rules, so
+closing this path does not break the probes.
+Prometheus scraping is done from inside the cluster via `Service backend:80/actuator/prometheus`.
 
-**8. Health check yolu Service-dədir, Ingress-də yox.** `alb.ingress.kubernetes.io/healthcheck-path`
-Ingress-ə yazılsa **hər iki** target group-a şamil olunur və birinin health check-i
-mütləq düşür (backend `/actuator/health/readiness`, frontend `/healthz`). Ona görə
-annotation hər Service-in üstündədir. Default `/` qalsaydı, Spring 404 qaytarardı,
-`success-codes: "200"` ilə uyğun gəlməzdi və `/api` daim 503 verərdi.
+**8. The health check path lives on the Service, not the Ingress.** If `alb.ingress.kubernetes.io/healthcheck-path`
+is set on the Ingress, it applies to **both** target groups and one of them is guaranteed to fail
+its health check (backend `/actuator/health/readiness`, frontend `/healthz`). That's why the
+annotation sits on each Service. If the default `/` were left in place, Spring would return 404,
+it wouldn't match `success-codes: "200"`, and `/api` would permanently return 503.
 
-**9. metrics-server Auto Mode-a daxil deyil.** Auto Mode CoreDNS, kube-proxy, VPC CNI,
-EBS CSI və ALB controller-i idarə edir, **metrics-server-i yox**. O olmasa HPA
-`TARGETS: <unknown>/70%` göstərir və heç vaxt scale etmir. `metrics-server.tf` onu
-Helm ilə qurur.
+**9. metrics-server is not part of Auto Mode.** Auto Mode manages CoreDNS, kube-proxy, VPC CNI,
+EBS CSI and the ALB controller, but **not metrics-server**. Without it the HPA shows
+`TARGETS: <unknown>/70%` and never scales. `metrics-server.tf` installs it via Helm.
 
-## Xərc (təxmini, eu-north-1)
+## Cost (approximate, eu-north-1)
 
-| Resurs | ~$/ay |
+| Resource | ~$/month |
 |---|---|
 | EKS control plane | 73 |
-| Auto Mode compute (2× t3.medium ekvivalenti + Auto Mode əlavəsi) | ~70 |
+| Auto Mode compute (2× t3.medium equivalent + Auto Mode surcharge) | ~70 |
 | ALB | 18 |
 | NAT Gateway (single) | 35 |
 | RDS db.t4g.micro | 17 |
-| **Cəmi** | **~215** |
+| **Total** | **~215** |
 
-ECS versiyası ~$73 idi. **Fərqin böyük hissəsi control plane-in $73-üdür — o, sən heç nə deploy etməsən də ödənilir.** İki servis üçün k8s-in iqtisadi cəhətdən niyə ağır olduğunu ilk cavabda deyəndə nəzərdə tutduğum məhz budur. Öyrənmə üçün tamamilə normaldır, sadəcə **işin bitəndə `terraform destroy` et** — unudulmuş EKS cluster-i bahalı dərsdir.
+The ECS version was ~$73. **Most of the difference is the control plane's $73 — you pay it even if you deploy nothing.** This is exactly what I meant in my first answer about why k8s is economically heavy for two services. For learning it's perfectly fine, just **run `terraform destroy` when you're done** — a forgotten EKS cluster is an expensive lesson.
 
-## Növbəti addımlar
+## Next steps
 
-1. **Argo CD** — manifestləri git-dən avtomatik sinxronlaşdır (GitOps mərhələsi)
-2. **HTTPS** — ACM sertifikat + `04-ingress.yaml`-dakı şərh açılmış annotation-lar
-3. **Müşahidə** — Prometheus + Grafana, `/actuator/prometheus` scrape et
-4. **Frontend-i CloudFront-a köçür** — pod-ları sil, xərc və gecikmə azalsın
-5. **Backup/DR** — Velero ilə cluster state, RDS snapshot siyasəti
+1. **Argo CD** — sync manifests from git automatically (the GitOps stage)
+2. **HTTPS** — ACM certificate + uncomment the annotations in `04-ingress.yaml`
+3. **Observability** — Prometheus + Grafana, scrape `/actuator/prometheus`
+4. **Move the frontend to CloudFront** — delete the pods, cut cost and latency
+5. **Backup/DR** — cluster state with Velero, RDS snapshot policy

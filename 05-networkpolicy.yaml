@@ -1,9 +1,9 @@
-# Zero-trust: default olaraq hər şeyi bağla, sonra lazım olanı aç.
-# QEYD: NetworkPolicy isləməsi üçün CNI-nin dəstəyi lazımdır.
-# EKS Auto Mode və yeni VPC CNI (v1.14+ enableNetworkPolicy) dəstəkləyir.
+# Zero-trust: deny everything by default, then open only what is needed.
+# NOTE: NetworkPolicy requires CNI support to take effect.
+# EKS Auto Mode and the newer VPC CNI (v1.14+ enableNetworkPolicy) support it.
 #
-# DIQQET: asagidaki cidr var.vpc_cidr (default 10.0.0.0/16) ile eyni olmalidir.
-# vpc_cidr-i deyisdirsen burani da deyis, yoxsa ALB pod-lara catmir.
+# WARNING: the cidr below must match var.vpc_cidr (default 10.0.0.0/16).
+# If you change vpc_cidr, change it here too, otherwise the ALB can't reach the pods.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -24,7 +24,7 @@ spec:
       app: backend
   policyTypes: [Ingress]
   ingress:
-    # ALB target-type=ip ilə birbaşa pod-a gəlir (VPC daxilindən)
+    # With target-type=ip the ALB reaches the pod directly (from inside the VPC)
     - from:
         - ipBlock:
             cidr: 10.0.0.0/16
@@ -32,9 +32,9 @@ spec:
         - protocol: TCP
           port: 8080
 ---
-# BU OLMASA frontend tamamile baglidir: yuxaridaki default-deny namespace-deki
-# BUTUN pod-lara aiddir, backend ucun istisna var idi, frontend ucun yox idi.
-# Neticede ALB health check-i dusur ve "/" 503 qaytarir.
+# WITHOUT THIS the frontend is fully blocked: the default-deny above applies to
+# ALL pods in the namespace; there was an exception for the backend but not for
+# the frontend. The result: the ALB health check fails and "/" returns 503.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

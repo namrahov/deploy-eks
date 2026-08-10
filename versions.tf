@@ -8,7 +8,7 @@ terraform {
     kubernetes = { source = "hashicorp/kubernetes", version = "~> 2.30" }
   }
 
-  # backend "s3" { ... }   <- komanda ile isleyende mutleq
+  # backend "s3" { ... }   <- mandatory when working in a team
 }
 
 provider "aws" {
@@ -18,9 +18,11 @@ provider "aws" {
   }
 }
 
-# EKS-e qosulma. exec plugin token-i her defe yeniden alir (token 15 deq yasayir).
-# aws_eks_cluster_auth data source-u BILEREKDEN yoxdur: exec plugin onsuz da
-# token alir, data source ise yalniz plan merhelesinde artiq asililiq yaradirdi.
+# Connecting to EKS. The exec plugin fetches a fresh token every time
+# (a token lives for 15 min).
+# The aws_eks_cluster_auth data source is DELIBERATELY absent: the exec plugin
+# already fetches a token, while the data source only added an extra dependency
+# at plan time.
 provider "kubernetes" {
   host                   = module.eks.cluster_endpoint
   cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)

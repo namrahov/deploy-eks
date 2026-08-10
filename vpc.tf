@@ -21,22 +21,22 @@ module "vpc" {
   create_database_subnet_group = true
 
   enable_nat_gateway = true
-  single_nat_gateway = true # oyrenme ucun 1 NAT kifayetdir (~$35/ay). Prod-da false.
+  single_nat_gateway = true # 1 NAT is enough for learning (~$35/month). Use false in prod.
 
   enable_dns_hostnames = true
   enable_dns_support   = true
 
   # ================================================================
-  # BU TAG-LAR EKS UCUN MECBURIDIR
-  # Bunlar olmasa ALB/NLB controller subnet-leri TAPA BILMIR ve
-  # Ingress yaradanda "unable to discover subnets" xetasi verir.
-  # EKS-de en cox ilisilen yer buradir.
+  # THESE TAGS ARE MANDATORY FOR EKS
+  # Without them the ALB/NLB controller CANNOT FIND the subnets and
+  # creating an Ingress fails with "unable to discover subnets".
+  # This is the most common place people get stuck on EKS.
   # ================================================================
   public_subnet_tags = {
     "kubernetes.io/role/elb" = "1" # internet-facing load balancer
   }
 
   private_subnet_tags = {
-    "kubernetes.io/role/internal-elb" = "1" # daxili load balancer + node-lar
+    "kubernetes.io/role/internal-elb" = "1" # internal load balancer + nodes
   }
 }

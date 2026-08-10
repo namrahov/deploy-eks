@@ -1,16 +1,16 @@
 # ============================================================
 # metrics-server
 #
-# EKS Auto Mode CoreDNS, kube-proxy, VPC CNI, EBS CSI ve ALB
-# controller-i ozu qurur - AMMA metrics-server-i QURMUR.
+# EKS Auto Mode installs CoreDNS, kube-proxy, VPC CNI, EBS CSI and the
+# ALB controller by itself - BUT it does NOT install metrics-server.
 #
-# O olmasa 02-backend.yaml-daki HorizontalPodAutoscaler islemir:
+# Without it the HorizontalPodAutoscaler in 02-backend.yaml does not work:
 #   kubectl get hpa -n app
 #   TARGETS: <unknown>/70%
-# ve pod-lar hec vaxt scale olunmur. `kubectl top` de isləmir.
+# and pods never scale. `kubectl top` does not work either.
 #
-# Klassik node group-da da (use_auto_mode = false) veziyyet eynidir,
-# ona gore her iki halda qurulur.
+# The situation is the same on a classic node group (use_auto_mode = false),
+# so it is installed in both cases.
 # ============================================================
 
 resource "helm_release" "metrics_server" {

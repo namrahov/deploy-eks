@@ -1,8 +1,9 @@
 variable "project" {
-  # DIQQET: bu ad Secrets Manager secret-inin adina girir
-  # ("<project>/db-credentials") ve 01-external-secret.yaml-da ELLE yazilib.
-  # Deyisdirsen hemin faylda remoteRef.key-leri de deyis, yoxsa
-  # ExternalSecret "SecretSyncedError" verir ve backend pod-lari acilmir.
+  # WARNING: this name goes into the Secrets Manager secret name
+  # ("<project>/db-credentials") and is hardcoded in 01-external-secret.yaml.
+  # If you change it, change the remoteRef.key values in that file too,
+  # otherwise the ExternalSecret reports "SecretSyncedError" and the backend
+  # pods never start.
   type    = string
   default = "my-springboot-eks"
 }
@@ -18,17 +19,17 @@ variable "vpc_cidr" {
 }
 
 variable "kubernetes_version" {
-  description = "EKS bir defede yalniz 1 minor versiya yuxari qalxir. Bleeding edge secme."
+  description = "EKS only upgrades one minor version at a time. Don't pick bleeding edge."
   type        = string
   default     = "1.34"
 }
 
 variable "use_auto_mode" {
   description = <<-EOT
-    true  -> EKS Auto Mode. AWS node-lari, Karpenter-i, VPC CNI, EBS CSI,
-             CoreDNS ve ALB controller-i ozu idare edir. Tovsiye olunan.
-    false -> Klassik managed node group. Ogrenmek ucun faydali,
-             amma addon-lari ozun qurmalisan.
+    true  -> EKS Auto Mode. AWS manages the nodes, Karpenter, VPC CNI, EBS CSI,
+             CoreDNS and the ALB controller for you. Recommended.
+    false -> Classic managed node group. Useful for learning,
+             but you have to install the addons yourself.
   EOT
   type        = bool
   default     = true
@@ -51,37 +52,37 @@ variable "db_instance_class" {
 }
 
 variable "db_engine_version" {
-  # Yalniz major versiya yazilir: RDS hemin major-un en son minor-unu secir.
-  # "16.4" kimi deqiq minor yazsan, AWS onu deprecate edende apply xeta verir.
+  # Only the major version is given: RDS picks the latest minor of that major.
+  # If you pin an exact minor like "16.4", apply breaks once AWS deprecates it.
   type    = string
   default = "16"
 }
 
 variable "free_tier_account" {
   description = <<-EOT
-    AWS "Free Tier" planindaki hesablar RDS-in bir sira funksiyalarini bloklayir
-    ve apply `FreeTierRestrictionError` ile dusur.
-    true  -> avtomatik backup, storage autoscaling, CloudWatch log export ve
-             Performance Insights sondurulur.
-    false -> hamisi aciq (hesabi paid plan-a kecirmisense).
-    Yoxlamaq: AWS Console -> Billing -> Free tier / Account plan.
+    Accounts on the AWS "Free Tier" plan block a number of RDS features and
+    apply fails with `FreeTierRestrictionError`.
+    true  -> automated backups, storage autoscaling, CloudWatch log export and
+             Performance Insights are disabled.
+    false -> everything is enabled (if you moved the account to a paid plan).
+    To check: AWS Console -> Billing -> Free tier / Account plan.
   EOT
   type        = bool
   default     = true
 }
 
 variable "db_backup_retention_period" {
-  description = "Gun sayi. Yalniz free_tier_account = false olanda tetbiq olunur."
+  description = "Number of days. Only applied when free_tier_account = false."
   type        = number
   default     = 7
 }
 
 variable "db_performance_insights" {
   description = <<-EOT
-    Performance Insights kicik instance-larda DESTEKLENMIR:
-    db.t2/t3/t4g .micro ve .small. db.t4g.micro-da true etsen apply
-    "InvalidParameterCombination" ile dusur.
-    db.t4g.medium ve yuxari kecende true et.
+    Performance Insights is NOT SUPPORTED on small instances:
+    db.t2/t3/t4g .micro and .small. If you set true on db.t4g.micro, apply
+    fails with "InvalidParameterCombination".
+    Set it to true once you move to db.t4g.medium or larger.
   EOT
   type        = bool
   default     = false
